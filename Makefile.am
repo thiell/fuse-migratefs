@@ -1,36 +1,35 @@
 SUBDIRS = lib
 
-bin_PROGRAMS = fuse-overlayfs
+bin_PROGRAMS = migratefs
 
 ACLOCAL_AMFLAGS = -Im4
 
-EXTRA_DIST = m4/gnulib-cache.m4 rpm/fuse-overlayfs.spec.template autogen.sh fuse-overlayfs.1.md
+EXTRA_DIST = m4/gnulib-cache.m4 rpm/fuse-migratefs.spec.template autogen.sh
 
-CLEANFILES = fuse-overlayfs.1
-
-fuse_overlayfs_CFLAGS = -I . -I $(abs_srcdir)/lib $(FUSE_CFLAGS)
-fuse_overlayfs_LDFLAGS =
-fuse_overlayfs_LDADD = lib/libgnu.a $(FUSE_LIBS)
-fuse_overlayfs_SOURCES = main.c
+migratefs_CFLAGS = -I . -I lib $(FUSE_CFLAGS)
+migratefs_LDFLAGS =
+migratefs_LDADD = lib/libgnu.a $(FUSE_LIBS)
+migratefs_SOURCES = main.c
 
 WD := $(shell pwd)
 
-man1_MANS = fuse-overlayfs.1
+#man1_MANS = fuse-migratefs.1
+#
+#fuse-migratefs.1:
+#	go-md2man -in $(abs_srcdir)/fuse-migratefs.1.md -out fuse-migratefs.1
+#
+#generate-man: fuse-migratefs.1
+#	go-md2man -in migratefs.1.md -out migratefs.1
 
-fuse-overlayfs.1:
-	go-md2man -in $(abs_srcdir)/fuse-overlayfs.1.md -out fuse-overlayfs.1
-
-generate-man: fuse-overlayfs.1
-
-fuse-overlayfs.spec: $(srcdir)/rpm/fuse-overlayfs.spec.template
+fuse-migratefs.spec: $(srcdir)/rpm/fuse-migratefs.spec.template
 	sed -e 's|#VERSION#|$(VERSION)|g' < $< > $@
 
-rpm: dist-gzip fuse-overlayfs.spec
+rpm: dist-gzip fuse-migratefs.spec
 	echo $(VERSION)
 	$(MAKE) -C $(WD) dist-xz
-	rpmbuild -ba --define "_sourcedir $(WD)" --define "_specdir $(WD)" --define "_builddir $(WD)" --define "_srcrpmdir $(WD)" --define "_rpmdir $(WD)" --define "_buildrootdir $(WD)/.build" fuse-overlayfs.spec
+	rpmbuild -ba --define "_sourcedir $(WD)" --define "_specdir $(WD)" --define "_builddir $(WD)" --define "_srcrpmdir $(WD)" --define "_rpmdir $(WD)" --define "_buildrootdir $(WD)/.build" fuse-migratefs.spec
 
-srpm: dist-gzip fuse-overlayfs.spec
+srpm: dist-gzip fuse-migratefs.spec
 	echo $(VERSION)
 	$(MAKE) -C $(WD) dist-xz
-	rpmbuild -bs --define "_sourcedir $(WD)" --define "_specdir $(WD)" --define "_builddir $(WD)" --define "_srcrpmdir $(WD)" --define "_rpmdir $(WD)" --define "_buildrootdir $(WD)/.build" fuse-overlayfs.spec
+	rpmbuild -bs --define "_sourcedir $(WD)" --define "_specdir $(WD)" --define "_builddir $(WD)" --define "_srcrpmdir $(WD)" --define "_rpmdir $(WD)" --define "_buildrootdir $(WD)/.build" fuse-migratefs.spec
