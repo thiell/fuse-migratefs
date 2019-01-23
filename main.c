@@ -83,6 +83,7 @@ struct _uintptr_to_must_hold_fuse_ino_t_dummy_struct
         const struct fuse_ctx *ctx = fuse_req_ctx (req); \
         setegid(ctx->gid); \
         seteuid(ctx->uid); \
+        umask(ctx->umask); \
     } while (0)
 
 #define FUSE_EXIT do { seteuid(getuid()); \
@@ -640,7 +641,7 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
           debug_print ("dent->d_name=%s\n", dent->d_name);
           if (TEMP_FAILURE_RETRY (fstatat (fd, dent->d_name, &st, AT_SYMLINK_NOFOLLOW)) < 0)
             {
-              debug_print ("fstatat failed errno=%s\n", errno);
+              debug_print ("fstatat failed errno=%d\n", errno);
               closedir (dp);
               return NULL;
             }
@@ -1942,8 +1943,7 @@ ovl_do_open (fuse_req_t req, fuse_ino_t parent, const char *name, int flags, mod
   int fd;
   const struct fuse_ctx *ctx = fuse_req_ctx (req);
 
-  debug_print ("ovl_do_open %s parent=%s readonly=%d\n",
-        name, ((struct ovl_node *)parent)->path, readonly);
+  debug_print ("ovl_do_open %s parent=0x%x readonly=%d\n", name, parent, readonly);
 
   flags |= O_NOFOLLOW;
 
