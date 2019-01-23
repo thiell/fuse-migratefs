@@ -2193,14 +2193,14 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
   struct stat old_st;
   struct timespec times[2];
   int dirfd;
+  int err;
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_setattr(ino=%" PRIu64 "s, to_set=%d)\n", ino, to_set);
+  debug_print ("ovl_setattr(ino=%" PRIu64 "s, to_set=%d)\n", ino, to_set);
 
   node = do_lookup_file (lo, ino, NULL);
   if (node == NULL)
     {
-      fprintf(stderr, "ovl_setattr: do_lookup_file failed errno=%d\n", errno);
+      debug_print ("ovl_setattr: do_lookup_file failed errno=%d\n", errno);
       fuse_reply_err (req, ENOENT);
       FUSE_EXIT;
       return;
@@ -2218,6 +2218,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
 
   if (TEMP_FAILURE_RETRY (fstatat (dirfd, node->path, &old_st, AT_SYMLINK_NOFOLLOW)) < 0)
     {
+      debug_print ("ovl_setattr failed with errno=%d\n", errno);
       fuse_reply_err (req, errno);
       FUSE_EXIT;
       return;
@@ -2255,24 +2256,48 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
 
   if ((to_set & FUSE_SET_ATTR_MODE) && fchmodat (dirfd, node->path, attr->st_mode, 0) < 0)
     {
+      debug_print ("ovl_setattr chmodat failed with errno=%d\n", errno);
       fuse_reply_err (req, errno);
       FUSE_EXIT;
       return;
     }
+
+  if ((to_set & (FUSE_SET_ATTR_UID|FUSE_SET_ATTR_UID)))
+    {
+      uid_t uid=-1, gid=-1;
+      if (to_set & FUSE_SET_ATTR_UID)
+        uid = attr->st_uid;
+      if (to_set & FUSE_SET_ATTR_GID)
+        gid = attr->st_gid;
+
+      if (fchownat (dirfd, node->path, uid, gid, AT_SYMLINK_NOFOLLOW) < 0)
+        {
+          err = errno;
+          debug_print ("ovl_setattr fchownat failed with errno=%d\n", err);
+          fuse_reply_err (req, err);
+          FUSE_EXIT;
+          return;
+        }
+    }
+
   if ((to_set & FUSE_SET_ATTR_SIZE))
     {
       int fd = TEMP_FAILURE_RETRY (openat (dirfd, node->path, O_WRONLY|O_NONBLOCK));
       if (fd < 0)
         {
-          fuse_reply_err (req, errno);
+          err = errno;
+          debug_print ("ovl_setattr FUSE_SET_ATTR_SIZE: openat failed with errno=%d\n", err);
+          fuse_reply_err (req, err);
           FUSE_EXIT;
           return;
         }
 
       if (ftruncate (fd, attr->st_size) < 0)
         {
+          err = errno;
+          debug_print ("ovl_setattr ftruncate failed with errno=%d\n", err);
           close (fd);
-          fuse_reply_err (req, errno);
+          fuse_reply_err (req, err);
           FUSE_EXIT;
           return;
         }
@@ -2779,8 +2804,10 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
   struct ovl_node key;
 
   debug_print ("ovl_rename_direct path=%s name=%s newparent=%s newname=%s\n",
-                ((struct ovl_node *)parent)->path, name,
-                ((struct ovl_node *)newparent)->path, newname);
+                (parent==FUSE_ROOT_ID)?"ROOT":((struct ovl_node *)parent)->path,
+                name,
+                (newparent==FUSE_ROOT_ID)?"ROOT":((struct ovl_node *)newparent)->path,
+                newname);
 
   node = do_lookup_file (lo, parent, name);
   if (node == NULL)
@@ -3481,7 +3508,7 @@ ovl_mknod (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev
 
   if (ovl_debug (req))
     fprintf (stderr, "ovl_mknod(ino=%" PRIu64 ", name=%s, mode=%d, rdev=%lu)\n",
-	     parent, name, mode, rdev);
+         parent, name, mode, rdev);
 
   node = do_lookup_file (lo, parent, name);
   if (node != NULL)
