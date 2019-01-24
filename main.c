@@ -113,13 +113,29 @@ static void FUSE_ENTER(fuse_req_t req)
           debug_print ("setgroups failed with errno=%d\n", errno);
         }
     }
+
+  if (setresgid(-1, ctx->gid, -1) < 0)
+    debug_print ("FUSE_EXIT: setresgid failed with errno=%d\n", errno);
+
+  if (setresuid(-1, ctx->uid, -1) < 0)
+    debug_print ("FUSE_EXIT: setresuid failed with errno=%d\n", errno);
+
+  umask(ctx->umask);
 }
 
 static void FUSE_EXIT()
 {
-  setresuid(-1, 0, -1);
-  setresgid(-1, 0, -1);
-  setgroups(0, NULL);
+  int ret;
+  gid_t gid = 0;
+
+  if (setresuid(-1, 0, -1) < 0)
+    debug_print ("FUSE_EXIT: setresuid failed with errno=%d\n", errno);
+
+  if (setresgid(-1, 0, -1) < 0)
+    debug_print ("FUSE_EXIT: setresgid failed with errno=%d\n", errno);
+
+  if (setgroups(1, &gid) < 0)
+    debug_print ("FUSE_EXIT: setgroups failed with errno=%d\n", errno);
 }
 
 struct ovl_layer
