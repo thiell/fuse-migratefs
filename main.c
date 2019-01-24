@@ -1705,6 +1705,7 @@ update_paths (struct ovl_node *node)
   return 0;
 }
 
+#if 0
 static int
 empty_dir (struct ovl_data *lo, struct ovl_node *node)
 {
@@ -1763,6 +1764,7 @@ empty_dir (struct ovl_data *lo, struct ovl_node *node)
 
   return 0;
 }
+#endif
 
 static int
 do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
@@ -1818,11 +1820,13 @@ do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
     }
   else
     {
+    /*
       if (empty_dir (lo, node) < 0)
         {
           debug_print ("do_node_rm emptydir %s errno=%d\n", name, errno);
           return errno;
         }
+        */
 
       //node->do_rmdir = 1;
       struct ovl_layer *it;
