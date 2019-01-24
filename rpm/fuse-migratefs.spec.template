@@ -1,0 +1,44 @@
+Summary: FUSE migratefs
+Name: fuse-migratefs
+Version: #VERSION#
+Release: 1%{?dist}
+Source0: %{url}/archive/%{name}-%{version}.tar.gz
+License: GPLv3+
+URL: https://github.com/giuseppe/fuse-migratefs
+
+# We always run autogen.sh
+BuildRequires: autoconf automake
+BuildRequires: git
+BuildRequires: gcc
+BuildRequires: fuse-devel > 3
+Requires: fuse > 3
+
+%description
+FUSE implementation of an overlay filesystem designed to merge
+several filesystems and disable new writes to (old) lower
+filesystem(s) thus allowing a seamless migration to a (new)
+upper filesystem.
+
+%prep
+%autosetup -n %{name}-%{version}
+
+%build
+env NOCONFIGURE=1 ./autogen.sh
+%configure --disable-silent-rules
+
+%make_build
+
+%install
+%make_install INSTALL="install -p"
+
+mkdir -p %{buildroot}/usr/lib/systemd/system
+mkdir -p %{buildroot}/etc/sysconfig
+install -p -m 0644 systemd/migratefs.service %{buildroot}/usr/lib/systemd/system/
+install -p -m 0644 systemd/migratefs %{buildroot}/etc/sysconfig/
+
+
+%files
+%license COPYING
+%{_bindir}/migratefs
+/usr/lib/systemd/system/migratefs.service
+/etc/sysconfig/migratefs
