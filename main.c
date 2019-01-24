@@ -63,8 +63,8 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 
-#define ATTR_TIMEOUT 1
-#define ENTRY_TIMEOUT 1
+#define ATTR_TIMEOUT 0
+#define ENTRY_TIMEOUT 0
 
 #define NODE_TO_INODE(x) ((fuse_ino_t) x)
 
@@ -2375,8 +2375,8 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
   int saved_errno;
   struct fuse_entry_param e;
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_link(ino=%" PRIu64 "s, newparent=%" PRIu64 "s, newname=%s)\n", ino, newparent, newname);
+  debug_print ("ovl_link(ino=%" PRIu64 "s, newparent=%" PRIu64 "s, newname=%s)\n", ino,
+               newparent, newname);
 
   node = do_lookup_file (lo, ino, NULL);
   if (node == NULL)
@@ -2385,8 +2385,7 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
       return;
     }
 
-  debug_print ("ovl_link node path=%s layer=%s\n",
-                node->path, node->layer->path);
+  debug_print ("ovl_link node path=%s layer=%s\n", node->path, node->layer->path);
 
   layer = node->layer;
   //pnode = node->parent;
@@ -3554,9 +3553,8 @@ ovl_mknod (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev
   struct fuse_entry_param e;
   const struct fuse_ctx *ctx = fuse_req_ctx (req);
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_mknod(ino=%" PRIu64 ", name=%s, mode=%d, rdev=%lu)\n",
-         parent, name, mode, rdev);
+  debug_print ("ovl_mknod(ino=%" PRIu64 ", name=%s, mode=0%o, rdev=%lu)\n",
+               parent, name, mode, rdev);
 
   node = do_lookup_file (lo, parent, name);
   if (node != NULL)
