@@ -2194,6 +2194,8 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
   struct timespec times[2];
   int dirfd;
   int err;
+  uid_t uid = -1;
+  gid_t gid = -1;
 
   debug_print ("ovl_setattr(ino=%" PRIu64 "s, to_set=%d)\n", ino, to_set);
 
@@ -2262,14 +2264,14 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
       return;
     }
 
-  if ((to_set & (FUSE_SET_ATTR_UID|FUSE_SET_ATTR_UID)))
+  if (to_set & (FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID))
     {
-      uid_t uid=-1, gid=-1;
       if (to_set & FUSE_SET_ATTR_UID)
-        uid = attr->st_uid;
+          uid = attr->st_uid;
       if (to_set & FUSE_SET_ATTR_GID)
-        gid = attr->st_gid;
+          gid = attr->st_gid;
 
+      debug_print ("ovl_setattr fchownat uid=%d gid=%d\n", uid, gid);
       if (fchownat (dirfd, node->path, uid, gid, AT_SYMLINK_NOFOLLOW) < 0)
         {
           err = errno;
