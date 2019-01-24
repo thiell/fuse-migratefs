@@ -79,21 +79,48 @@ struct _uintptr_to_must_hold_fuse_ino_t_dummy_struct
 };
 #endif
 
-#define FUSE_ENTER(req) do { \
-        const struct fuse_ctx *ctx = fuse_req_ctx (req); \
-        setegid(ctx->gid); \
-        seteuid(ctx->uid); \
-        umask(ctx->umask); \
-    } while (0)
 
-#define FUSE_EXIT do { seteuid(getuid()); \
-                       setegid(getgid()); \
-                         } while (0)
-
+static int ngroups;
+static gid_t *suppl_gids;
 
 #define debug_print(fmt, ...) \
             do { if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
 
+
+static void FUSE_ENTER(fuse_req_t req)
+{
+  const struct fuse_ctx *ctx = fuse_req_ctx (req);
+  int ret;
+  int i;
+
+  ret = fuse_req_getgroups(req, sizeof(*suppl_gids) * ngroups, suppl_gids);
+  if (ret < 0)
+    {
+      debug_print ("fuse_req_getgroups failed with errno=%d\n", -ret);
+    }
+  else
+    {
+    /*
+      debug_print ("fuse_req_getgroups returned %d groups\n", ret);
+
+      for (i=0; i<ret; i++)
+        debug_print ("group: %d\n", suppl_gids[i]);
+        */
+
+      ret = setgroups(ret, suppl_gids);
+      if (ret < 0)
+        {
+          debug_print ("setgroups failed with errno=%d\n", errno);
+        }
+    }
+}
+
+static void FUSE_EXIT()
+{
+  setresuid(-1, 0, -1);
+  setresgid(-1, 0, -1);
+  setgroups(0, NULL);
+}
 
 struct ovl_layer
 {
@@ -313,7 +340,10 @@ rpl_stat (fuse_req_t req, struct ovl_node *node, struct stat *st)
 
   ret = TEMP_FAILURE_RETRY (fstatat (node_dirfd (node), node->path, st, AT_SYMLINK_NOFOLLOW));
   if (ret < 0)
-    return ret;
+    {
+      debug_print ("rpl_stat: fstatat failed with errno=%d\n", errno);
+      return ret;
+    }
 
   st->st_ino = node->ino;
   if (ret == 0 && node_dirp (node))
@@ -429,7 +459,7 @@ ovl_forget (fuse_req_t req, fuse_ino_t ino, uint64_t nlookup)
   do_forget (ino, nlookup);
   fuse_reply_none (req);
 
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static size_t
@@ -879,7 +909,7 @@ ovl_lookup (fuse_req_t req, fuse_ino_t parent, const char *name)
   if (node == NULL)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -887,7 +917,7 @@ ovl_lookup (fuse_req_t req, fuse_ino_t parent, const char *name)
   if (err)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -898,7 +928,7 @@ ovl_lookup (fuse_req_t req, fuse_ino_t parent, const char *name)
   e.entry_timeout = ENTRY_TIMEOUT;
   fuse_reply_entry (req, &e);
 
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 struct ovl_dirp
@@ -973,7 +1003,7 @@ ovl_opendir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   fi->fh = (uintptr_t) d;
 
   fuse_reply_open (req, fi);
-  FUSE_EXIT;
+  FUSE_EXIT();
   return;
 
 out_errno:
@@ -985,7 +1015,7 @@ out_errno:
       free (d);
     }
   fuse_reply_err (req, errno);
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -1073,7 +1103,7 @@ ovl_readdir (fuse_req_t req, fuse_ino_t ino, size_t size,
 
   ovl_do_readdir (req, ino, size, offset, fi, 0);
 
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -1084,7 +1114,7 @@ ovl_readdirplus (fuse_req_t req, fuse_ino_t ino, size_t size,
 
   ovl_do_readdir (req, ino, size, offset, fi, 1);
 
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -1110,7 +1140,7 @@ ovl_releasedir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   free (d);
   fuse_reply_err (req, 0);
 
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -1131,7 +1161,7 @@ ovl_listxattr (fuse_req_t req, fuse_ino_t ino, size_t size)
   if (node == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -1141,7 +1171,7 @@ ovl_listxattr (fuse_req_t req, fuse_ino_t ino, size_t size)
       if (buf == NULL)
         {
           fuse_reply_err (req, ENOMEM);
-          FUSE_EXIT;
+          FUSE_EXIT();
           return;
         }
     }
@@ -1157,7 +1187,7 @@ ovl_listxattr (fuse_req_t req, fuse_ino_t ino, size_t size)
 
   free (buf);
 
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -1178,7 +1208,7 @@ ovl_getxattr (fuse_req_t req, fuse_ino_t ino, const char *name, size_t size)
   if (node == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -1188,7 +1218,7 @@ ovl_getxattr (fuse_req_t req, fuse_ino_t ino, const char *name, size_t size)
       if (buf == NULL)
         {
           fuse_reply_err (req, ENOMEM);
-          FUSE_EXIT;
+          FUSE_EXIT();
           return;
         }
     }
@@ -1204,7 +1234,7 @@ ovl_getxattr (fuse_req_t req, fuse_ino_t ino, const char *name, size_t size)
 
   free (buf);
 
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -1839,7 +1869,7 @@ ovl_unlink (fuse_req_t req, fuse_ino_t parent, const char *name)
 	     parent, name);
   do_rm (req, parent, name, false);
 
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -1852,7 +1882,7 @@ ovl_rmdir (fuse_req_t req, fuse_ino_t parent, const char *name)
 	     parent, name);
   do_rm (req, parent, name, true);
 
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -1892,7 +1922,7 @@ ovl_setxattr (fuse_req_t req, fuse_ino_t ino, const char *name,
     }
   fuse_reply_err (req, 0);
 exit:
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -1930,7 +1960,7 @@ ovl_removexattr (fuse_req_t req, fuse_ino_t ino, const char *name)
 
   fuse_reply_err (req, 0);
 exit:
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static int
@@ -2109,7 +2139,7 @@ ovl_create (fuse_req_t req, fuse_ino_t parent, const char *name,
   if (fd < 0)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -2118,7 +2148,7 @@ ovl_create (fuse_req_t req, fuse_ino_t parent, const char *name,
     {
       close (fd);
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
   fi->fh = fd;
@@ -2126,7 +2156,7 @@ ovl_create (fuse_req_t req, fuse_ino_t parent, const char *name,
   node->lookups++;
   debug_print ("ovl_create: inc lookups=%d\n", node->lookups);
   fuse_reply_create (req, &e, fi);
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -2143,12 +2173,12 @@ ovl_open (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   if (fd < 0)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
   fi->fh = fd;
   fuse_reply_open (req, fi);
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -2167,19 +2197,19 @@ ovl_getattr (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   if (node == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
   if (do_getattr (req, &e, node) < 0)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
   fuse_reply_attr (req, &e.attr, ENTRY_TIMEOUT);
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -2204,7 +2234,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
     {
       debug_print ("ovl_setattr: do_lookup_file failed errno=%d\n", errno);
       fuse_reply_err (req, ENOENT);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -2212,7 +2242,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
   if (node == NULL)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -2222,14 +2252,14 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
     {
       debug_print ("ovl_setattr failed with errno=%d\n", errno);
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
   if (to_set & FUSE_SET_ATTR_CTIME)
     {
       fuse_reply_err (req, EPERM);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -2251,7 +2281,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
       if ((utimensat (dirfd, node->path, times, AT_SYMLINK_NOFOLLOW) < 0))
         {
           fuse_reply_err (req, errno);
-          FUSE_EXIT;
+          FUSE_EXIT();
           return;
         }
     }
@@ -2260,7 +2290,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
     {
       debug_print ("ovl_setattr chmodat failed with errno=%d\n", errno);
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -2277,7 +2307,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
           err = errno;
           debug_print ("ovl_setattr fchownat failed with errno=%d\n", err);
           fuse_reply_err (req, err);
-          FUSE_EXIT;
+          FUSE_EXIT();
           return;
         }
     }
@@ -2290,7 +2320,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
           err = errno;
           debug_print ("ovl_setattr FUSE_SET_ATTR_SIZE: openat failed with errno=%d\n", err);
           fuse_reply_err (req, err);
-          FUSE_EXIT;
+          FUSE_EXIT();
           return;
         }
 
@@ -2300,7 +2330,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
           debug_print ("ovl_setattr ftruncate failed with errno=%d\n", err);
           close (fd);
           fuse_reply_err (req, err);
-          FUSE_EXIT;
+          FUSE_EXIT();
           return;
         }
       close (fd);
@@ -2309,12 +2339,12 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
   if (do_getattr (req, &e, node) < 0)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
   fuse_reply_attr (req, &e.attr, ENTRY_TIMEOUT);
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -2451,7 +2481,7 @@ cleanup:
 
   fuse_reply_err (req, ret == 0 ? 0 : errno);
 exit:
-  FUSE_EXIT;
+  FUSE_EXIT();
 
 #if 0
   destnode = do_lookup_file (lo, newparent, newname);
@@ -2632,7 +2662,7 @@ ovl_symlink (fuse_req_t req, const char *link, fuse_ino_t parent, const char *na
   fuse_reply_entry (req, &e);
 
 exit:
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -2652,7 +2682,7 @@ ovl_flock (fuse_req_t req, fuse_ino_t ino,
 
   fuse_reply_err (req, ret == 0 ? 0 : errno);
 
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -3177,7 +3207,7 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
 
 error:
   fuse_reply_err (req, ret);
-  FUSE_EXIT;
+  FUSE_EXIT();
 
 
 
@@ -3357,7 +3387,7 @@ cleanup:
 
   fuse_reply_err (req, ret == 0 ? 0 : errno);
 exit:
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -3408,7 +3438,7 @@ ovl_statfs (fuse_req_t req, fuse_ino_t ino)
 
   fuse_reply_statfs (req, &up_sfs);
 exit:
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -3428,7 +3458,7 @@ ovl_readlink (fuse_req_t req, fuse_ino_t ino)
   if (node == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -3444,19 +3474,19 @@ ovl_readlink (fuse_req_t req, fuse_ino_t ino)
   if (ret == -1)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
   if (ret == sizeof (buf))
     {
       fuse_reply_err (req, ENAMETOOLONG);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
   buf[ret] = '\0';
   fuse_reply_readlink (req, buf);
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static int
@@ -3578,7 +3608,7 @@ ovl_mknod (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev
   debug_print ("ovl_mknod: inc lookups=%d\n", node->lookups);
   fuse_reply_entry (req, &e);
 exit:
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -3602,7 +3632,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   if (node != NULL)
     {
       fuse_reply_err (req, EEXIST);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -3610,7 +3640,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   if (pnode == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -3618,7 +3648,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   if (pnode == NULL)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
   sprintf (path, "%s/%s", pnode->path, name);
@@ -3628,7 +3658,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   if (ret < 0)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -3636,7 +3666,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   if (node == NULL)
     {
       fuse_reply_err (req, ENOMEM);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -3644,7 +3674,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   if (node == NULL)
     {
       fuse_reply_err (req, ENOMEM);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 #if 0
@@ -3652,14 +3682,14 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   if (ret < 0)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
   if (delete_whiteout (lo, -1, pnode, name) < 0)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 #endif
@@ -3670,7 +3700,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   if (ret)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT;
+      FUSE_EXIT();
       return;
     }
 
@@ -3680,7 +3710,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   node->lookups++;
   debug_print ("ovl_mkdir: inc lookups=%d\n", node->lookups);
   fuse_reply_entry (req, &e);
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 static void
@@ -3698,7 +3728,7 @@ ovl_fsync (fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info *
   ret = datasync ? fdatasync (fd) : fsync (fd);
   fuse_reply_err (req, ret == 0 ? 0 : errno);
 
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 
 #if ENABLE_IOCTL
@@ -3766,7 +3796,7 @@ ovl_ioctl (fuse_req_t req, fuse_ino_t ino, int cmd, void *arg,
   //fuse_reply_err (req, 0);
 exit:
   //free(mybuf);
-  FUSE_EXIT;
+  FUSE_EXIT();
 }
 #endif
 
@@ -3881,6 +3911,11 @@ main (int argc, char *argv[])
   int ret = -1;
   struct fuse_args args = FUSE_ARGS_INIT (argc, newargv);
 
+  ngroups = sysconf(_SC_NGROUPS_MAX);
+  suppl_gids = malloc(sizeof(*suppl_gids) * ngroups);
+  if (suppl_gids == NULL)
+    error (EXIT_FAILURE, ENOMEM, "cannot allocate memory");
+
   memset (&opts, 0, sizeof (opts));
   if (fuse_opt_parse (&args, &lo, ovl_opts, fuse_opt_proc) == -1)
     error (EXIT_FAILURE, 0, "error parsing options");
@@ -3970,6 +4005,7 @@ err_out1:
   node_free (lo.root);
 
   free_layers (lo.layers);
+  free(suppl_gids);
   fuse_opt_free_args (&args);
 
   return ret ? 1 : 0;
