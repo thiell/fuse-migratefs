@@ -2965,7 +2965,10 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
           debug_print ("ovl_rename_direct NOREPLACE error destnode %s already exists\n", destnode->path);
           goto error;
         }
-
+    /* we cannot do do_node_rm here because of the following POSIX rule:
+     * rename returns EEXIST or ENOTEMPTY if the 'to' argument is a directory and is not empty"
+     * so let's try to let renameat() handle it
+     * concern: rm in lower layers??
       if (destnode)
         {
           debug_print ("ovl_rename_direct destnode %s already exists in layer %s\n",
@@ -2975,6 +2978,7 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
           if (ret < 0)
               goto error;
         }
+      */
 
       ret = renameat (srcfd, name, destfd, newname);
       if (ret < 0)
