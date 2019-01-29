@@ -39,6 +39,6 @@ install -p -m 0644 systemd/migratefs %{buildroot}/etc/sysconfig/
 
 %files
 %license COPYING
+%config(noreplace) /etc/sysconfig/migratefs
 %{_bindir}/migratefs
 /usr/lib/systemd/system/migratefs.service
-/etc/sysconfig/migratefs
