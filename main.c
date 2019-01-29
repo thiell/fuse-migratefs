@@ -27,7 +27,7 @@
 #define _FILE_OFFSET_BITS 64
 #define ENABLE_IOCTL 0
 
-#define DEBUG 1
+#define DEBUG 0
 
 #include <config.h>
 
@@ -47,6 +47,7 @@
 #include <error.h>
 #include <inttypes.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <hash.h>
 #include <sys/statvfs.h>
 #include <sys/file.h>
@@ -125,7 +126,6 @@ static void FUSE_ENTER(fuse_req_t req)
 
 static void FUSE_EXIT()
 {
-  int ret;
   gid_t gid = 0;
 
   if (setresuid(-1, 0, -1) < 0)
@@ -2031,7 +2031,8 @@ ovl_do_open (fuse_req_t req, fuse_ino_t parent, const char *name, int flags, mod
 
       sprintf (path, "%s/%s", p->path, name);
 
-      debug_print ("ovl_do_open %s creating %s on upper layer\n", name, path);
+      debug_print ("ovl_do_open %s creating %s on upper layer mode=0%o ctx->umask=0%o\n", name,
+                   path, mode, ctx->umask);
       fd = TEMP_FAILURE_RETRY (openat (get_upper_layer (lo)->fd, path, flags, mode & ~ctx->umask));
       if (fd < 0) {
         debug_print ("ovl_do_open openat failed with errno %d\n", errno);
