@@ -2333,17 +2333,9 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
         }
     }
 
-  if ((to_set & FUSE_SET_ATTR_SIZE))
+  if (to_set & FUSE_SET_ATTR_SIZE)
     {
-      int fd = TEMP_FAILURE_RETRY (openat (dirfd, node->path, O_WRONLY|O_NONBLOCK));
-      if (fd < 0)
-        {
-          err = errno;
-          debug_print ("ovl_setattr FUSE_SET_ATTR_SIZE: openat failed with errno=%d\n", err);
-          fuse_reply_err (req, err);
-          FUSE_EXIT();
-          return;
-        }
+      int fd = fi->fh;
 
       if (ftruncate (fd, attr->st_size) < 0)
         {
@@ -2354,7 +2346,6 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
           FUSE_EXIT();
           return;
         }
-      close (fd);
     }
 
   if (do_getattr (req, &e, node) < 0)
