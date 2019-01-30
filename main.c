@@ -469,9 +469,7 @@ ovl_forget (fuse_req_t req, fuse_ino_t ino, uint64_t nlookup)
 {
   FUSE_ENTER(req);
 
-  if (ovl_debug (req))
-    debug_print ("ovl_forget(ino=%" PRIu64 ", nlookup=%lu)\n",
-	     ino, nlookup);
+  debug_print ("ovl_forget(ino=%" PRIu64 ", nlookup=%lu)\n", ino, nlookup);
   do_forget (ino, nlookup);
   fuse_reply_none (req);
 
@@ -915,9 +913,7 @@ ovl_lookup (fuse_req_t req, fuse_ino_t parent, const char *name)
   struct ovl_data *lo = ovl_data (req);
   struct ovl_node *node;
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_lookup(parent=%" PRIu64 ", name=%s)\n",
-	     parent, name);
+  debug_print ("ovl_lookup(parent=%" PRIu64 ", name=%s)\n", parent, name);
 
   memset (&e, 0, sizeof (e));
 
@@ -1042,8 +1038,7 @@ ovl_do_readdir (fuse_req_t req, fuse_ino_t ino, size_t size,
   size_t remaining = size;
   char *p, *buffer = calloc (size, 1);
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_do_readdir(ino=%" PRIu64 ")\n", ino);
+  debug_print ("ovl_do_readdir(ino=%" PRIu64 ")\n", ino);
 
   if (buffer == NULL)
     {
@@ -1141,8 +1136,7 @@ ovl_releasedir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   size_t s;
   struct ovl_dirp *d = ovl_dirp (fi);
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_releasedir(ino=%" PRIu64 ")\n", ino);
+  debug_print ("ovl_releasedir(ino=%" PRIu64 ")\n", ino);
 
   for (s = 2; s < d->tbl_size; s++)
     {
@@ -1170,8 +1164,7 @@ ovl_listxattr (fuse_req_t req, fuse_ino_t ino, size_t size)
   char path[PATH_MAX + 10];
   char *buf = NULL;
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_listxattr(ino=%" PRIu64 ", size=%zu)\n", ino, size);
+  debug_print ("ovl_listxattr(ino=%" PRIu64 ", size=%zu)\n", ino, size);
 
   node = do_lookup_file (lo, ino, NULL);
   if (node == NULL)
@@ -1217,8 +1210,7 @@ ovl_getxattr (fuse_req_t req, fuse_ino_t ino, const char *name, size_t size)
   char *buf = NULL;
   char path[PATH_MAX + 10];
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_getxattr(ino=%" PRIu64 ", name=%s, size=%zu)\n", ino, name, size);
+  debug_print ("ovl_getxattr(ino=%" PRIu64 ", name=%s, size=%zu)\n", ino, name, size);
 
   node = do_lookup_file (lo, ino, NULL);
   if (node == NULL)
@@ -1262,9 +1254,7 @@ ovl_access (fuse_req_t req, fuse_ino_t ino, int mask)
   struct ovl_data *lo = ovl_data (req);
   struct ovl_node *n = do_lookup_file (lo, ino, NULL);
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_access(ino=%" PRIu64 ", mask=%d)\n",
-	     ino, mask);
+  debug_print ("ovl_access(ino=%" PRIu64 ", mask=%d)\n", ino, mask);
 
   ret = faccessat (node_dirfd (n), n->path, mask, AT_SYMLINK_NOFOLLOW);
   fuse_reply_err (req, ret < 0 ? errno : 0);
@@ -1884,9 +1874,8 @@ ovl_unlink (fuse_req_t req, fuse_ino_t parent, const char *name)
 {
   FUSE_ENTER(req);
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_unlink(parent=%" PRIu64 ", name=%s)\n",
-	     parent, name);
+  debug_print ("ovl_unlink(parent=%" PRIu64 ", name=%s)\n", parent, name);
+
   do_rm (req, parent, name, false);
 
   FUSE_EXIT();
@@ -1897,9 +1886,8 @@ ovl_rmdir (fuse_req_t req, fuse_ino_t parent, const char *name)
 {
   FUSE_ENTER(req);
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_rmdir(parent=%" PRIu64 ", name=%s)\n",
-	     parent, name);
+  debug_print ("ovl_rmdir(parent=%" PRIu64 ", name=%s)\n", parent, name);
+
   do_rm (req, parent, name, true);
 
   FUSE_EXIT();
@@ -1915,10 +1903,8 @@ ovl_setxattr (fuse_req_t req, fuse_ino_t ino, const char *name,
   struct ovl_node *node;
   char path[PATH_MAX + 10];
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_setxattr(ino=%" PRIu64 "s, name=%s, value=%s, size=%zu, flags=%d)\n", ino, name,
-             value, size, flags);
-
+  debug_print ("ovl_setxattr(ino=%" PRIu64 "s, name=%s, value=%s, size=%zu, flags=%d)\n", ino, name,
+               value, size, flags);
 
   node = do_lookup_file (lo, ino, NULL);
   if (node == NULL)
@@ -1954,8 +1940,7 @@ ovl_removexattr (fuse_req_t req, fuse_ino_t ino, const char *name)
   struct ovl_data *lo = ovl_data (req);
   char path[PATH_MAX + 10];
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_removexattr(ino=%" PRIu64 "s, name=%s)\n", ino, name);
+  debug_print ("ovl_removexattr(ino=%" PRIu64 "s, name=%s)\n", ino, name);
 
   node = do_lookup_file (lo, ino, NULL);
   if (node == NULL)
@@ -2080,9 +2065,8 @@ ovl_read (fuse_req_t req, fuse_ino_t ino, size_t size,
 	 off_t offset, struct fuse_file_info *fi)
 {
   struct fuse_bufvec buf = FUSE_BUFVEC_INIT (size);
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_read(ino=%" PRIu64 ", size=%zd, "
-	     "off=%lu)\n", ino, size, (unsigned long) offset);
+  debug_print ("ovl_read(ino=%" PRIu64 ", size=%zd, off=%lu)\n",
+               ino, size, (unsigned long) offset);
   buf.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
   buf.buf[0].fd = fi->fh;
   buf.buf[0].pos = offset;
@@ -2101,9 +2085,8 @@ ovl_write_buf (fuse_req_t req, fuse_ino_t ino,
   out_buf.buf[0].fd = fi->fh;
   out_buf.buf[0].pos = off;
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_write_buf(ino=%" PRIu64 ", size=%zd, off=%lu, fd=%d)\n",
-	     ino, out_buf.buf[0].size, (unsigned long) off, (int) fi->fh);
+  debug_print ("ovl_write_buf(ino=%" PRIu64 ", size=%zd, off=%lu, fd=%d)\n",
+               ino, out_buf.buf[0].size, (unsigned long) off, (int) fi->fh);
 
   errno = 0;
   res = fuse_buf_copy (&out_buf, in_buf, 0);
@@ -2150,9 +2133,7 @@ ovl_create (fuse_req_t req, fuse_ino_t parent, const char *name,
   struct ovl_data *lo = ovl_data (req);
   struct ovl_node *node;
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_create(parent=%" PRIu64 ", name=%s)\n",
-	     parent, name);
+  debug_print ("ovl_create(parent=%" PRIu64 ", name=%s)\n", parent, name);
 
   fi->flags = fi->flags | O_CREAT;
 
@@ -2187,8 +2168,7 @@ ovl_open (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 
   int fd;
 
-  //if (ovl_debug (req))
-  fprintf (stderr, "ovl_open(ino=%" PRIu64 "s)\n", ino);
+  debug_print ("ovl_open(ino=%" PRIu64 "s)\n", ino);
 
   fd = ovl_do_open (req, ino, NULL, fi->flags, 0700);
   if (fd < 0)
@@ -2211,8 +2191,7 @@ ovl_getattr (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   struct ovl_node *node;
   struct fuse_entry_param e;
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_getattr(ino=%" PRIu64 "s)\n", ino);
+  debug_print ("ovl_getattr(ino=%" PRIu64 "s)\n", ino);
 
   node = do_lookup_file (lo, ino, NULL);
   if (node == NULL)
@@ -2602,8 +2581,7 @@ ovl_symlink (fuse_req_t req, const char *link, fuse_ino_t parent, const char *na
   int ret;
   struct fuse_entry_param e;
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_symlink(link=%s, ino=%" PRIu64 "s, name=%s)\n", link, parent, name);
+  debug_print ("ovl_symlink(link=%s, ino=%" PRIu64 "s, name=%s)\n", link, parent, name);
 
   pnode = do_lookup_file (lo, parent, NULL);
   if (pnode == NULL)
@@ -2684,8 +2662,7 @@ ovl_flock (fuse_req_t req, fuse_ino_t ino,
 
   int ret, fd;
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_flock(ino=%" PRIu64 "s, op=%d)\n", ino, op);
+  debug_print ("ovl_flock(ino=%" PRIu64 "s, op=%d)\n", ino, op);
 
   fd = fi->fh;
 
@@ -3410,8 +3387,8 @@ ovl_rename (fuse_req_t req, fuse_ino_t parent, const char *name,
            fuse_ino_t newparent, const char *newname,
            unsigned int flags)
 {
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_rename(ino=%" PRIu64 "s, name=%s , ino=%" PRIu64 "s, name=%s)\n", parent, name, newparent, newname);
+  debug_print ("ovl_rename(ino=%" PRIu64 "s, name=%s , ino=%" PRIu64 "s, name=%s)\n",
+               parent, name, newparent, newname);
 
   if (flags & RENAME_EXCHANGE)
     ovl_rename_exchange (req, parent, name, newparent, newname, flags);
@@ -3428,8 +3405,7 @@ ovl_statfs (fuse_req_t req, fuse_ino_t ino)
   struct statvfs lo_sfs, up_sfs;
   struct ovl_data *lo = ovl_data (req);
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_statfs(ino=%" PRIu64 "s)\n", ino);
+  debug_print ("ovl_statfs(ino=%" PRIu64 "s)\n", ino);
 
   ret = statvfs (lo->upperdir, &up_sfs);
   if (ret < 0)
@@ -3466,8 +3442,7 @@ ovl_readlink (fuse_req_t req, fuse_ino_t ino)
   int ret = 0;
   char buf[PATH_MAX + 1];
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_readlink(ino=%" PRIu64 "s)\n", ino);
+  debug_print ("ovl_readlink(ino=%" PRIu64 "s)\n", ino);
 
   node = do_lookup_file (lo, ino, NULL);
   if (node == NULL)
@@ -3638,9 +3613,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   struct fuse_entry_param e;
   const struct fuse_ctx *ctx = fuse_req_ctx (req);
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_mkdir(ino=%" PRIu64 ", name=%s, mode=%d)\n",
-	     parent, name, mode);
+  debug_print ("ovl_mkdir(ino=%" PRIu64 ", name=%s, mode=%d)\n", parent, name, mode);
 
   node = do_lookup_file (lo, parent, name);
   if (node != NULL)
@@ -3734,9 +3707,7 @@ ovl_fsync (fuse_req_t req, fuse_ino_t ino, int datasync, struct fuse_file_info *
 
   int ret, fd;
 
-  if (ovl_debug (req))
-    fprintf (stderr, "ovl_fsync(ino=%" PRIu64 ", datasync=%d, fi=%p)\n",
-             ino, datasync, fi);
+  debug_print ("ovl_fsync(ino=%" PRIu64 ", datasync=%d, fi=%p)\n", ino, datasync, fi);
 
   fd = fi->fh;
   ret = datasync ? fdatasync (fd) : fsync (fd);
