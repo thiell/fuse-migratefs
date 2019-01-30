@@ -3402,7 +3402,7 @@ ovl_statfs (fuse_req_t req, fuse_ino_t ino)
   FUSE_ENTER(req);
 
   int ret;
-  struct statvfs lo_sfs, up_sfs;
+  struct statvfs up_sfs;
   struct ovl_data *lo = ovl_data (req);
 
   debug_print ("ovl_statfs(ino=%" PRIu64 "s)\n", ino);
@@ -3413,19 +3413,6 @@ ovl_statfs (fuse_req_t req, fuse_ino_t ino)
       fuse_reply_err (req, errno);
       goto exit;
     }
-  ret = statvfs (lo->lowerdir, &lo_sfs);
-  if (ret < 0)
-    {
-      fuse_reply_err (req, errno);
-      goto exit;
-    }
-
-  up_sfs.f_blocks += lo_sfs.f_blocks;
-  //up_sfs.f_bfree += lo_sfs.f_bfree;
-  //up_sfs.f_bavail += lo_sfs.f_bavail;
-  up_sfs.f_files += lo_sfs.f_files;
-  //up_sfs.f_ffree += lo_sfs.f_ffree;
-  //up_sfs.f_favail += lo_sfs.f_favail;
 
   fuse_reply_statfs (req, &up_sfs);
 exit:
