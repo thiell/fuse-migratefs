@@ -1,6 +1,5 @@
 [Unit]
 Description=migratefs overlay FUSE mount service
-After=shine.service
 
 [Service]
 EnvironmentFile=-/etc/sysconfig/migratefs
