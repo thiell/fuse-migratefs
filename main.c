@@ -27,7 +27,11 @@
 #define _FILE_OFFSET_BITS 64
 #define ENABLE_IOCTL 0
 
-#define DEBUG 0
+// VERB_LEVEL:
+// 0 = quiet
+// 1 = verbose (copyup and errors only)
+// 2 = debug
+#define VERB_LEVEL 1
 
 #include <config.h>
 
@@ -84,8 +88,11 @@ struct _uintptr_to_must_hold_fuse_ino_t_dummy_struct
 static int ngroups;
 static gid_t *suppl_gids;
 
+#define verb_print(fmt, ...) \
+            do { if (VERB_LEVEL > 0) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
+
 #define debug_print(fmt, ...) \
-            do { if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
+            do { if (VERB_LEVEL > 1) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
 
 
 static void FUSE_ENTER(fuse_req_t req)
@@ -136,6 +143,18 @@ static void FUSE_EXIT()
 
   if (setgroups(1, &gid) < 0)
     debug_print ("FUSE_EXIT: setgroups failed with errno=%d\n", errno);
+}
+
+static uid_t FUSE_GETCURRENTUID()
+{
+  uid_t ruid, euid = 99, suid;
+  int saved_errno = errno;
+
+  if (getresuid(&ruid, &euid, &suid) < 0)
+    verb_print ("FUSE_GETCURRENTUID: getresuid failed with errno=%d\n", errno);
+
+  errno = saved_errno;
+  return euid;
 }
 
 struct ovl_layer
@@ -1404,10 +1423,10 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
         goto out;
     }
 
-  unlinkat (parentfd, name, 0);
+  TEMP_FAILURE_RETRY (unlinkat (parentfd, name, 0));
   errno = 0;
 
-  ret = renameat (parentfd, wd_tmp_file_name, dirfd, name);
+  ret = TEMP_FAILURE_RETRY (renameat (parentfd, wd_tmp_file_name, dirfd, name));
 out:
   if (dfd >= 0)
     close (dfd);
@@ -1415,7 +1434,7 @@ out:
     free (buf);
 
   if (ret < 0)
-      unlinkat (parentfd, wd_tmp_file_name, AT_REMOVEDIR);
+      TEMP_FAILURE_RETRY (unlinkat (parentfd, wd_tmp_file_name, AT_REMOVEDIR));
 
   if (parentfd >= 0)
     close (parentfd);
@@ -1481,6 +1500,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   char *buf = NULL;
   struct timespec times[2];
   char wd_tmp_file_name[32];
+  int total_written = 0;
 
   debug_print ("copyup node->path=%s layer=%s\n", node->path, node->layer->path);
 
@@ -1489,7 +1509,8 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   ret = TEMP_FAILURE_RETRY (fstatat (node_dirfd (node), node->path, &st, AT_SYMLINK_NOFOLLOW));
   if (ret < 0)
     {
-      debug_print ("copyup fstatat ret=%d errno=%d\n", ret, errno);
+      verb_print ("copyup fstatat uid=%u path=%s layer=%s ret=%d errno=%d\n", FUSE_GETCURRENTUID(),
+                  node->path, node->layer->path, ret, errno);
       return ret;
     }
 
@@ -1501,8 +1522,8 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
       ret = create_node_directory (lo, node->parent);
       if (ret < 0)
         {
-          debug_print ("copyup create_node_directory ret=%d errno=%d\n",
-                            ret, errno);
+          verb_print ("copyup create_node_directory failed uid=%u ret=%d errno=%d\n",
+                      FUSE_GETCURRENTUID(), ret, errno);
           return ret;
         }
     }
@@ -1518,11 +1539,11 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   if ((st.st_mode & S_IFMT) == S_IFLNK)
     {
       char p[PATH_MAX + 1];
-      ret = readlinkat (node_dirfd (node), node->path, p, sizeof (p) - 1);
+      ret = TEMP_FAILURE_RETRY (readlinkat (node_dirfd (node), node->path, p, sizeof (p) - 1));
       if (ret < 0)
         goto exit;
       p[ret] = '\0';
-      ret = symlinkat (p, get_upper_layer (lo)->fd, node->path);
+      ret = TEMP_FAILURE_RETRY (symlinkat (p, get_upper_layer (lo)->fd, node->path));
       if (ret < 0)
         goto exit;
       goto success;
@@ -1535,8 +1556,8 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   parentfd = TEMP_FAILURE_RETRY (openat (get_upper_layer (lo)->fd, node->parent->path, O_DIRECTORY));
   if (parentfd < 0)
     {
-      debug_print ("copyup parentfd failed parentfd=%d errno=%d node->parent->path=%s\n",
-                parentfd, errno, node->parent->path);
+      verb_print ("copyup openat parentfd failed uid=%u errno=%d path=%s\n",
+                  FUSE_GETCURRENTUID(), errno, node->parent->path);
       goto exit;
     }
 
@@ -1567,13 +1588,14 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
         written += ret;
         nread -= ret;
       }
-      debug_print ("copyup xfer written=%llu\n", written);
       while (nread);
+      total_written += written;
+      debug_print ("copyup xfer written=%llu\n", written);
     }
 
   times[0] = st.st_atim;
   times[1] = st.st_mtim;
-  ret = futimens (dfd, times);
+  ret = TEMP_FAILURE_RETRY (futimens (dfd, times));
   if (ret < 0)
     goto exit;
 
@@ -1582,7 +1604,8 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
     goto exit;
 
   /* Finally, move the file to its destination.  */
-  ret = renameat (parentfd, wd_tmp_file_name, get_upper_layer (lo)->fd, node->path);
+  ret = TEMP_FAILURE_RETRY (renameat (parentfd, wd_tmp_file_name,
+                            get_upper_layer (lo)->fd, node->path));
   if (ret < 0)
     goto exit;
 
@@ -1598,10 +1621,16 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
 
  success:
   ret = 0;
-
   node->layer = get_upper_layer (lo);
 
+  verb_print ("copyup success uid=%u written=%lld path=%s\n",
+              FUSE_GETCURRENTUID(), total_written, node->path);
+
  exit:
+  if (ret < 0)
+      verb_print ("copyup failed uid=%u errno=%d written=%lld path=%s\n",
+                  FUSE_GETCURRENTUID(), errno, total_written, node->path);
+
   saved_errno = errno;
   free (buf);
   if (sfd >= 0)
@@ -1609,7 +1638,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   if (dfd >= 0)
     close (dfd);
   if (ret < 0)
-    unlinkat (parentfd, wd_tmp_file_name, 0);
+    TEMP_FAILURE_RETRY (unlinkat (parentfd, wd_tmp_file_name, 0));
   if (parentfd >= 0)
     close (parentfd);
   errno = saved_errno;
@@ -1799,7 +1828,7 @@ do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
             debug_print ("do_node_rm path=%s do_unlink layer %s\n",
                               node->path, it->path);
             errno = 0;
-            r = unlinkat (it->fd, node->path, 0);
+            r = TEMP_FAILURE_RETRY (unlinkat (it->fd, node->path, 0));
             debug_print ("do_node_rm unlinkat ret=%d errno=%d\n", r, errno);
             if (r == 0)
               ret = 0;
