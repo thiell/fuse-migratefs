@@ -1522,8 +1522,8 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
       ret = create_node_directory (lo, node->parent);
       if (ret < 0)
         {
-          verb_print ("copyup create_node_directory failed uid=%u ret=%d errno=%d\n",
-                      FUSE_GETCURRENTUID(), ret, errno);
+          verb_print ("copyup create_node_directory failed uid=%u ret=%d errno=%d path=%s\n",
+                      FUSE_GETCURRENTUID(), ret, errno, node->parent->path);
           return ret;
         }
     }
