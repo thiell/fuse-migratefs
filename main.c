@@ -750,7 +750,8 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
       next = hash_get_next (n->children, nit);
       if (!nit->loaded)
         {
-          fprintf (stderr, "load_dir hash_delete orphan path=%s name=%s\n", nit->path, nit->name);
+          verb_print ("load_dir hash_delete orphan uid=%u path=%s name=%s\n",
+                      FUSE_GETCURRENTUID(), nit->path, nit->name);
           hash_delete(n->children, nit);
         }
     }
@@ -1586,10 +1587,10 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
         if (ret < 0)
           goto exit;
         written += ret;
+        total_written += ret;
         nread -= ret;
       }
       while (nread);
-      total_written += written;
       debug_print ("copyup xfer written=%llu\n", written);
     }
 
