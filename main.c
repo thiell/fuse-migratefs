@@ -1641,6 +1641,19 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
     TEMP_FAILURE_RETRY (unlinkat (parentfd, wd_tmp_file_name, 0));
   if (parentfd >= 0)
     close (parentfd);
+
+  // optional: delete file from lower layer
+  if (ret == 0)
+    {
+      struct ovl_layer *it;
+
+      for (it = get_lower_layers(lo); it; it = it->next)
+          if (TEMP_FAILURE_RETRY (unlinkat (it->fd, node->path, 0)) < 0)
+            verb_print ("copyup failed to remove file from lower layer %s uid=%u errno=%d path=%s\n",
+                        it->path, FUSE_GETCURRENTUID(), errno, node->path);
+    }
+  // end optional
+
   errno = saved_errno;
 
   return ret;
