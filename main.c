@@ -2338,17 +2338,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
       return;
     }
 
-  // copyup only on truncate
-  if (to_set & FUSE_SET_ATTR_SIZE)
-    {
-      node = get_node_up (lo, node);
-      if (node == NULL)
-        {
-          fuse_reply_err (req, errno);
-          FUSE_EXIT();
-          return;
-        }
-    }
+  // no copyup, work in current layer
 
   dirfd = node_dirfd (node);
 
@@ -2418,7 +2408,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
 
   if (to_set & FUSE_SET_ATTR_SIZE)
     {
-      int fd = fi->fh;
+      int fd = fi->fh;  // must have been opened in write
 
       if (ftruncate (fd, attr->st_size) < 0)
         {
