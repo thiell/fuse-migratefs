@@ -2408,18 +2408,37 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
 
   if (to_set & FUSE_SET_ATTR_SIZE)
     {
-      int fd = fi->fh;  // must have been opened in write
+      int fd;
+
+      if (fi == NULL)
+        {
+          fd = TEMP_FAILURE_RETRY (openat (dirfd, node->path, O_WRONLY|O_NONBLOCK));
+          if (fd < 0)
+            {
+              err = errno;
+              verb_print ("ovl_setattr FUSE_SET_ATTR_SIZE: openat failed with errno=%d uid=%u\n",
+                          err, FUSE_GETCURRENTUID());
+              fuse_reply_err (req, err);
+              FUSE_EXIT();
+              return;
+            }
+        }
+      else
+          fd = fi->fh;  // must have been opened in write
 
       if (ftruncate (fd, attr->st_size) < 0)
         {
           err = errno;
           verb_print ("ovl_setattr ftruncate failed with errno=%d uid=%u\n", err,
                       FUSE_GETCURRENTUID());
-          //close (fd);
+          if (fi == NULL)
+            close (fd);
           fuse_reply_err (req, err);
           FUSE_EXIT();
           return;
         }
+        if (fi == NULL)
+          close (fd);
     }
 
   if (do_getattr (req, &e, node) < 0)
