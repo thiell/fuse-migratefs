@@ -33,6 +33,8 @@
 // 2 = debug
 #define VERB_LEVEL 1
 
+#define DELETE_FILE_ON_COPYUP 1
+
 #include <config.h>
 
 #include <fuse.h>
@@ -87,12 +89,21 @@ struct _uintptr_to_must_hold_fuse_ino_t_dummy_struct
 
 static int ngroups;
 static gid_t *suppl_gids;
+static uid_t saved_uid;  // could be replaced by getresuid(..., suid)
 
+#if VERB_LEVEL > 0
 #define verb_print(fmt, ...) \
-            do { if (VERB_LEVEL > 0) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
+            do { fprintf(stderr, fmt, __VA_ARGS__); } while (0)
+#else
+#define verb_print(fmt, ...) do {} while (0)
+#endif
 
+#if VERB_LEVEL > 1
 #define debug_print(fmt, ...) \
-            do { if (VERB_LEVEL > 1) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
+            do { fprintf(stderr, fmt, __VA_ARGS__); } while (0)
+#else
+#define debug_print(fmt, ...) do {} while (0)
+#endif
 
 
 static void FUSE_ENTER(fuse_req_t req)
@@ -108,13 +119,6 @@ static void FUSE_ENTER(fuse_req_t req)
     }
   else
     {
-    /*
-      debug_print ("fuse_req_getgroups returned %d groups\n", ret);
-
-      for (i=0; i<ret; i++)
-        debug_print ("group: %d\n", suppl_gids[i]);
-        */
-
       ret = setgroups(ret, suppl_gids);
       if (ret < 0)
         {
@@ -125,6 +129,7 @@ static void FUSE_ENTER(fuse_req_t req)
   if (setresgid(-1, ctx->gid, -1) < 0)
     debug_print ("FUSE_EXIT: setresgid failed with errno=%d\n", errno);
 
+  saved_uid = ctx->uid;
   if (setresuid(-1, ctx->uid, -1) < 0)
     debug_print ("FUSE_EXIT: setresuid failed with errno=%d\n", errno);
 
@@ -135,6 +140,7 @@ static void FUSE_EXIT()
 {
   gid_t gid = 0;
 
+  saved_uid = 0;
   if (setresuid(-1, 0, -1) < 0)
     debug_print ("FUSE_EXIT: setresuid failed with errno=%d\n", errno);
 
@@ -145,8 +151,28 @@ static void FUSE_EXIT()
     debug_print ("FUSE_EXIT: setgroups failed with errno=%d\n", errno);
 }
 
+
+// temporary priv elevation helpers for copyup
+
+static void FUSE_ENTER_ROOTPRIV()
+{
+  if (setresuid(-1, 0, -1) < 0)
+    verb_print ("FUSE_ENTER_ROOTPRIV: setresuid failed with errno=%d\n", errno);
+}
+
+static void FUSE_EXIT_ROOTPRIV()
+{
+  if (setresuid(-1, saved_uid, -1) < 0)
+    verb_print ("FUSE_EXIT_ROOTPRIV: setresuid uid=%u failed with errno=%d\n",
+                saved_uid, errno);
+}
+
+
 static uid_t FUSE_GETCURRENTUID()
 {
+#if 1
+  return saved_uid;
+#else
   uid_t ruid, euid = 99, suid;
   int saved_errno = errno;
 
@@ -155,6 +181,7 @@ static uid_t FUSE_GETCURRENTUID()
 
   errno = saved_errno;
   return euid;
+#endif
 }
 
 struct ovl_layer
@@ -750,8 +777,8 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
       next = hash_get_next (n->children, nit);
       if (!nit->loaded)
         {
-          verb_print ("load_dir hash_delete orphan uid=%u path=%s name=%s\n",
-                      FUSE_GETCURRENTUID(), nit->path, nit->name);
+          debug_print ("load_dir hash_delete orphan uid=%u path=%s name=%s\n",
+                       FUSE_GETCURRENTUID(), nit->path, nit->name);
           hash_delete(n->children, nit);
         }
     }
@@ -1448,6 +1475,7 @@ static int
 create_node_directory (struct ovl_data *lo, struct ovl_node *src)
 {
   int ret;
+  int saved_errno;
   struct stat st;
   int sfd = -1;
   struct timespec times[2];
@@ -1473,6 +1501,16 @@ create_node_directory (struct ovl_data *lo, struct ovl_node *src)
   debug_print ("create_node_directory: create_directory %s ret=%d errno=%d\n", src->path, ret, errno);
 
   close (sfd);
+
+  // Set original directory ownership
+  if (ret == 0 && geteuid() == 0)
+    {
+      saved_errno = errno;
+      if (fchownat(get_upper_layer (lo)->fd, src->path, st.st_uid, st.st_gid, 0) < 0)
+          verb_print ("create_node_directory fchownat failed with errno=%d path=%s\n",
+                      errno, src->path);
+      errno = saved_errno;
+    }
 
   if (ret == 0)
       src->layer = get_upper_layer (lo);
@@ -1510,7 +1548,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   ret = TEMP_FAILURE_RETRY (fstatat (node_dirfd (node), node->path, &st, AT_SYMLINK_NOFOLLOW));
   if (ret < 0)
     {
-      verb_print ("copyup fstatat uid=%u path=%s layer=%s ret=%d errno=%d\n", FUSE_GETCURRENTUID(),
+      verb_print ("copyup fstatat path=%s layer=%s ret=%d errno=%d\n",
                   node->path, node->layer->path, ret, errno);
       return ret;
     }
@@ -1523,8 +1561,8 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
       ret = create_node_directory (lo, node->parent);
       if (ret < 0)
         {
-          verb_print ("copyup create_node_directory failed uid=%u ret=%d errno=%d path=%s\n",
-                      FUSE_GETCURRENTUID(), ret, errno, node->parent->path);
+          verb_print ("copyup create_node_directory failed ret=%d errno=%d path=%s\n",
+                      ret, errno, node->parent->path);
           return ret;
         }
     }
@@ -1547,6 +1585,12 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
       ret = TEMP_FAILURE_RETRY (symlinkat (p, get_upper_layer (lo)->fd, node->path));
       if (ret < 0)
         goto exit;
+
+      // Set original ownership
+      if (fchownat(get_upper_layer (lo)->fd, node->path, st.st_uid, st.st_gid,
+                   AT_SYMLINK_NOFOLLOW) < 0)
+        goto exit;
+
       goto success;
     }
 
@@ -1557,8 +1601,8 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   parentfd = TEMP_FAILURE_RETRY (openat (get_upper_layer (lo)->fd, node->parent->path, O_DIRECTORY));
   if (parentfd < 0)
     {
-      verb_print ("copyup openat parentfd failed uid=%u errno=%d path=%s\n",
-                  FUSE_GETCURRENTUID(), errno, node->parent->path);
+      verb_print ("copyup openat parentfd failed errno=%d path=%s\n",
+                  errno, node->parent->path);
       goto exit;
     }
 
@@ -1591,7 +1635,6 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
         nread -= ret;
       }
       while (nread);
-      debug_print ("copyup xfer written=%llu\n", written);
     }
 
   times[0] = st.st_atim;
@@ -1604,33 +1647,29 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   if (ret < 0)
     goto exit;
 
+  // Set original file ownership
+  ret = TEMP_FAILURE_RETRY (fchownat(parentfd, wd_tmp_file_name, st.st_uid,
+                                     st.st_gid, AT_SYMLINK_NOFOLLOW));
+  if (ret < 0)
+    goto exit;
+
   /* Finally, move the file to its destination.  */
   ret = TEMP_FAILURE_RETRY (renameat (parentfd, wd_tmp_file_name,
                             get_upper_layer (lo)->fd, node->path));
   if (ret < 0)
     goto exit;
 
-/*
-  if (node->parent)
-    {
-      char whpath[PATH_MAX + 10];
-      sprintf (whpath, "%s/.wh.%s", node->parent->path, node->name);
-      if (unlinkat (get_upper_layer (lo)->fd, whpath, 0) < 0 && errno != ENOENT)
-        goto exit;
-    }
-*/
-
  success:
   ret = 0;
   node->layer = get_upper_layer (lo);
 
-  verb_print ("copyup success uid=%u written=%lld path=%s\n",
-              FUSE_GETCURRENTUID(), total_written, node->path);
+  verb_print ("copyup success from uid=%u st_uid=%u written=%lld path=%s\n",
+              FUSE_GETCURRENTUID(), st.st_uid, total_written, node->path);
 
  exit:
   if (ret < 0)
-      verb_print ("copyup failed uid=%u errno=%d written=%lld path=%s\n",
-                  FUSE_GETCURRENTUID(), errno, total_written, node->path);
+      verb_print ("copyup failed from uid=%u st_uid=%u errno=%d written=%lld path=%s\n",
+                  FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
 
   saved_errno = errno;
   free (buf);
@@ -1643,17 +1682,19 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   if (parentfd >= 0)
     close (parentfd);
 
-  // optional: delete file from lower layer
-  if (ret == 0)
+#if DELETE_FILE_ON_COPYUP
+  // optional: delete REGULAR file from lower layer
+  if (ret == 0 && (st.st_mode & S_IFMT) == S_IFREG)
     {
       struct ovl_layer *it;
 
       for (it = get_lower_layers(lo); it; it = it->next)
           if (TEMP_FAILURE_RETRY (unlinkat (it->fd, node->path, 0)) < 0)
-            verb_print ("copyup failed to remove file from lower layer %s uid=%u errno=%d path=%s\n",
-                        it->path, FUSE_GETCURRENTUID(), errno, node->path);
+            verb_print ("copyup failed to remove file from lower layer %s errno=%d path=%s\n",
+                        it->path, errno, node->path);
     }
   // end optional
+#endif
 
   errno = saved_errno;
 
@@ -1671,9 +1712,25 @@ get_node_up (struct ovl_data *lo, struct ovl_node *node)
   if (node->layer == get_upper_layer (lo))
     return node;
 
+  //
+  // FUSE EXIT - copyup is performed as root
+  //
+  FUSE_ENTER_ROOTPRIV();
+
   ret = copyup (lo, node);
+
+  //
+  // FUSE ENTER - done copyup as root
+  //
   if (ret < 0)
-    return NULL;
+    {
+      int saved_errno = errno;
+      FUSE_EXIT_ROOTPRIV();
+      errno = saved_errno;
+      return NULL;
+    }
+
+  FUSE_EXIT_ROOTPRIV();
 
   assert (node->layer == get_upper_layer (lo));
 
@@ -2281,12 +2338,16 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
       return;
     }
 
-  node = get_node_up (lo, node);
-  if (node == NULL)
+  // copyup only on truncate
+  if (to_set & FUSE_SET_ATTR_SIZE)
     {
-      fuse_reply_err (req, errno);
-      FUSE_EXIT();
-      return;
+      node = get_node_up (lo, node);
+      if (node == NULL)
+        {
+          fuse_reply_err (req, errno);
+          FUSE_EXIT();
+          return;
+        }
     }
 
   dirfd = node_dirfd (node);
@@ -2389,7 +2450,7 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
   struct ovl_layer *layer;
   char path[PATH_MAX + 10];
   int ret;
-  int destfd;
+  int destfd = -1;
   int saved_errno;
   struct fuse_entry_param e;
 
@@ -2498,7 +2559,8 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
   e.entry_timeout = ENTRY_TIMEOUT;
   fuse_reply_entry (req, &e);
 
-  close (destfd);
+  if (destfd >= 0)
+    close (destfd);
 
   ret = 0;
   goto exit;
@@ -3487,6 +3549,7 @@ ovl_readlink (fuse_req_t req, fuse_ino_t ino)
   if (node == NULL)
     {
       fuse_reply_err (req, errno);
+      FUSE_EXIT();
       return;
     }
 
@@ -3668,6 +3731,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
       FUSE_EXIT();
       return;
     }
+
   sprintf (path, "%s/%s", pnode->path, name);
 
   ret = create_directory (lo, get_upper_layer (lo)->fd, path, NULL, pnode, -1,
