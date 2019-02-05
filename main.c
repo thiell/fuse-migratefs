@@ -2423,8 +2423,9 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
       if (ftruncate (fd, attr->st_size) < 0)
         {
           err = errno;
-          debug_print ("ovl_setattr ftruncate failed with errno=%d\n", err);
-          close (fd);
+          verb_print ("ovl_setattr ftruncate failed with errno=%d uid=%u\n", err,
+                      FUSE_GETCURRENTUID());
+          //close (fd);
           fuse_reply_err (req, err);
           FUSE_EXIT();
           return;
@@ -3010,8 +3011,8 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
           ret = create_lower_directory (lo, layer->fd, destpnode);
           if (ret < 0)
             {
-              debug_print ("create_node_directory: create_lower_directory %s ret=%d errno=%d\n",
-                    destpnode->path, ret, errno);
+              verb_print ("ovl_rename_direct: create_lower_directory ret=%d errno=%d path=%s\n",
+                          ret, errno, destpnode->path);
               goto error;
             }
         }
