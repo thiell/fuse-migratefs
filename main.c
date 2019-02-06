@@ -1463,12 +1463,12 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
           // assume directory was created by another cluster node
           ret = 0;
           errno = 0;
-          verb_print ("create_directory: [OK] renameat failed with ENOTEMPTY uid=%u name=%s parent=%s\n",
+          verb_print ("create_directory=warning call=renameat errno=ENOTEMPTY uid=%u name=%s parent=%s\n",
                       FUSE_GETCURRENTUID(), name, parent->path);
         }
       else
         {
-          verb_print ("create_directory: renameat failed with errno=%d uid=%u name=%s parent=%s\n",
+          verb_print ("create_directory=failed call=renameat errno=%d uid=%u name=%s parent=%s\n",
                       errno, FUSE_GETCURRENTUID(), name, parent->path);
         }
     }
@@ -1483,7 +1483,7 @@ out:
       saved_errno = errno;
       if (TEMP_FAILURE_RETRY (unlinkat (parentfd, wd_tmp_file_name, AT_REMOVEDIR)) < 0)
         {
-          verb_print ("create_directory: [cleanup] unlinkat failed with errno=%d uid=%u name=%s parent=%s\n",
+          verb_print ("create_directory=cleanup_failed call=unlinkat errno=%d uid=%u name=%s parent=%s\n",
                       errno, FUSE_GETCURRENTUID(), wd_tmp_file_name, parent->path);
         }
       errno = saved_errno;
@@ -1532,7 +1532,7 @@ create_node_directory (struct ovl_data *lo, struct ovl_node *src)
     {
       saved_errno = errno;
       if (fchownat(get_upper_layer (lo)->fd, src->path, st.st_uid, st.st_gid, 0) < 0)
-          verb_print ("create_node_directory fchownat failed with errno=%d path=%s\n",
+          verb_print ("create_node_directory=failed call=fchownat errno=%d path=%s\n",
                       errno, src->path);
       errno = saved_errno;
     }
@@ -1573,7 +1573,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   ret = TEMP_FAILURE_RETRY (fstatat (node_dirfd (node), node->path, &st, AT_SYMLINK_NOFOLLOW));
   if (ret < 0)
     {
-      verb_print ("copyup fstatat path=%s layer=%s ret=%d errno=%d\n",
+      verb_print ("copyup=failed call=fstatat path=%s layer=%s ret=%d errno=%d\n",
                   node->path, node->layer->path, ret, errno);
       return ret;
     }
@@ -1586,7 +1586,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
       ret = create_node_directory (lo, node->parent);
       if (ret < 0)
         {
-          verb_print ("copyup create_node_directory failed ret=%d errno=%d path=%s\n",
+          verb_print ("copyup=failed call=create_node_directory ret=%d errno=%d path=%s\n",
                       ret, errno, node->parent->path);
           return ret;
         }
@@ -1626,7 +1626,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   parentfd = TEMP_FAILURE_RETRY (openat (get_upper_layer (lo)->fd, node->parent->path, O_DIRECTORY));
   if (parentfd < 0)
     {
-      verb_print ("copyup openat parentfd failed errno=%d path=%s\n",
+      verb_print ("copyup=failed call=openat errno=%d path=%s\n",
                   errno, node->parent->path);
       goto exit;
     }
@@ -1688,12 +1688,12 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   ret = 0;
   node->layer = get_upper_layer (lo);
 
-  verb_print ("copyup success from uid=%u st_uid=%u written=%lld path=%s\n",
+  verb_print ("copyup=success uid=%u st_uid=%u written=%lld path=%s\n",
               FUSE_GETCURRENTUID(), st.st_uid, total_written, node->path);
 
  exit:
   if (ret < 0)
-      verb_print ("copyup failed from uid=%u st_uid=%u errno=%d written=%lld path=%s\n",
+      verb_print ("copyup=failed uid=%u st_uid=%u errno=%d written=%lld path=%s\n",
                   FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
 
   saved_errno = errno;
@@ -1715,7 +1715,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
 
       for (it = get_lower_layers(lo); it; it = it->next)
           if (TEMP_FAILURE_RETRY (unlinkat (it->fd, node->path, 0)) < 0)
-            verb_print ("copyup failed to remove file from lower layer %s errno=%d path=%s\n",
+            verb_print ("copyup=failed to remove file from lower layer %s errno=%d path=%s\n",
                         it->path, errno, node->path);
     }
   // end optional
@@ -1731,7 +1731,7 @@ get_node_up (struct ovl_data *lo, struct ovl_node *node)
 {
   int ret;
 
-  debug_print ("get_node_up node->path=%s, node->layer->path=%s\n",
+  debug_print ("get_node_up node_path=%s, node_layer=%s\n",
         node->path, node->layer->path);
 
   if (node->layer == get_upper_layer (lo))
@@ -2441,7 +2441,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
           if (fd < 0)
             {
               err = errno;
-              verb_print ("ovl_setattr FUSE_SET_ATTR_SIZE: openat failed with errno=%d uid=%u\n",
+              verb_print ("ovl_setattr=failed call=openat FUSE_SET_ATTR_SIZE errno=%d uid=%u\n",
                           err, FUSE_GETCURRENTUID());
               fuse_reply_err (req, err);
               FUSE_EXIT();
@@ -2454,7 +2454,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
       if (ftruncate (fd, attr->st_size) < 0)
         {
           err = errno;
-          verb_print ("ovl_setattr ftruncate failed with errno=%d uid=%u\n", err,
+          verb_print ("ovl_setattr=failed call=ftruncate errno=%d uid=%u\n", err,
                       FUSE_GETCURRENTUID());
           if (fi == NULL)
             close (fd);
@@ -3045,7 +3045,7 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
           ret = create_lower_directory (lo, layer->fd, destpnode);
           if (ret < 0)
             {
-              verb_print ("ovl_rename_direct: create_lower_directory ret=%d errno=%d path=%s\n",
+              verb_print ("ovl_rename_direct=failed call=create_lower_directory ret=%d errno=%d path=%s\n",
                           ret, errno, destpnode->path);
               goto error;
             }
