@@ -1392,7 +1392,7 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
 
   debug_print ("create_directory name=%s parent->path=%s\n", name, parent->path);
 
-  sprintf (wd_tmp_file_name, ".overlay-tmpdir-%lu", get_next_wd_counter ());
+  sprintf (wd_tmp_file_name, ".migratefs-tmpdir-%lu", get_next_wd_counter ());
 
   // recursive creation
 
@@ -1543,7 +1543,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
 
   debug_print ("copyup node->path=%s layer=%s\n", node->path, node->layer->path);
 
-  sprintf (wd_tmp_file_name, "%lu", get_next_wd_counter ());
+  sprintf (wd_tmp_file_name, ".migratefs-copyup-%lu", get_next_wd_counter ());
 
   ret = TEMP_FAILURE_RETRY (fstatat (node_dirfd (node), node->path, &st, AT_SYMLINK_NOFOLLOW));
   if (ret < 0)
