@@ -1388,6 +1388,7 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
   int dfd = -1;
   int parentfd;
   char *buf = NULL;
+  int saved_errno;
   char wd_tmp_file_name[64];
 
   debug_print ("create_directory name=%s parent->path=%s\n", name, parent->path);
@@ -1455,6 +1456,22 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
   errno = 0;
 
   ret = TEMP_FAILURE_RETRY (renameat (parentfd, wd_tmp_file_name, dirfd, name));
+  if (ret < 0)
+    {
+      if (errno == ENOTEMPTY)
+        {
+          // assume directory was created by another cluster node
+          ret = 0;
+          errno = 0;
+          verb_print ("create_directory: [OK] renameat failed with ENOTEMPTY uid=%u name=%s parent=%s\n",
+                      FUSE_GETCURRENTUID(), name, parent->path);
+        }
+      else
+        {
+          verb_print ("create_directory: renameat failed with errno=%d uid=%u name=%s parent=%s\n",
+                      errno, FUSE_GETCURRENTUID(), name, parent->path);
+        }
+    }
 out:
   if (dfd >= 0)
     close (dfd);
@@ -1462,7 +1479,15 @@ out:
     free (buf);
 
   if (ret < 0)
-      TEMP_FAILURE_RETRY (unlinkat (parentfd, wd_tmp_file_name, AT_REMOVEDIR));
+    {
+      saved_errno = errno;
+      if (TEMP_FAILURE_RETRY (unlinkat (parentfd, wd_tmp_file_name, AT_REMOVEDIR)) < 0)
+        {
+          verb_print ("create_directory: [cleanup] unlinkat failed with errno=%d uid=%u name=%s parent=%s\n",
+                      errno, FUSE_GETCURRENTUID(), wd_tmp_file_name, parent->path);
+        }
+      errno = saved_errno;
+    }
 
   if (parentfd >= 0)
     close (parentfd);
