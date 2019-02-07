@@ -1111,8 +1111,9 @@ ovl_do_readdir (fuse_req_t req, fuse_ino_t ino, size_t size,
         ret = rpl_stat (req, node, &st);
         if (ret < 0)
           {
-            fuse_reply_err (req, errno);
-            goto exit;
+            verb_print ("readdir=failed call=rpl_stat errno=%d uid=%u node_path=%s\n",
+                        errno, FUSE_GETCURRENTUID(), node->path);
+            continue;
           }
 
         if (offset == 0)
