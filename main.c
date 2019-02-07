@@ -1284,7 +1284,7 @@ ovl_getxattr (fuse_req_t req, fuse_ino_t ino, const char *name, size_t size)
     }
 
   sprintf (path, "%s/%s", node->layer->path, node->path);
-  len = TEMP_FAILURE_RETRY (getxattr (path, name, buf, size));
+  len = TEMP_FAILURE_RETRY (lgetxattr (path, name, buf, size));
   if (len < 0)
     fuse_reply_err (req, errno);
   else if (size == 0)
@@ -2051,7 +2051,7 @@ ovl_setxattr (fuse_req_t req, fuse_ino_t ino, const char *name,
     }
 
   sprintf (path, "%s/%s", node->layer->path, node->path);
-  if (TEMP_FAILURE_RETRY( setxattr (path, name, value, size, flags) < 0))
+  if (TEMP_FAILURE_RETRY( lsetxattr (path, name, value, size, flags) < 0))
     {
       fuse_reply_err (req, errno);
       goto exit;
