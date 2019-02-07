@@ -1564,7 +1564,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   char *buf = NULL;
   struct timespec times[2];
   char wd_tmp_file_name[32];
-  int total_written = 0;
+  uint64_t total_written = 0;
 
   debug_print ("copyup node->path=%s layer=%s\n", node->path, node->layer->path);
 
@@ -1640,7 +1640,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
     goto exit;
   for (;;)
     {
-      int written;
+      uint64_t written;
       int nread;
 
       nread = TEMP_FAILURE_RETRY (read (sfd, buf, buf_size));
@@ -1688,12 +1688,12 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   ret = 0;
   node->layer = get_upper_layer (lo);
 
-  verb_print ("copyup=success uid=%u st_uid=%u written=%lld path=%s\n",
+  verb_print ("copyup=success uid=%u st_uid=%u written=%"PRIu64" path=%s\n",
               FUSE_GETCURRENTUID(), st.st_uid, total_written, node->path);
 
  exit:
   if (ret < 0)
-      verb_print ("copyup=failed uid=%u st_uid=%u errno=%d written=%lld path=%s\n",
+      verb_print ("copyup=failed uid=%u st_uid=%u errno=%d written=%"PRIu64" path=%s\n",
                   FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
 
   saved_errno = errno;
