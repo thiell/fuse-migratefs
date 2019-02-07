@@ -33,6 +33,7 @@
 // 2 = debug
 #define VERB_LEVEL 1
 
+#define COPYUP_ON_SETXATTR 0    // setxattr and removexattr
 #define DELETE_FILE_ON_COPYUP 1
 
 #include <config.h>
@@ -2043,12 +2044,14 @@ ovl_setxattr (fuse_req_t req, fuse_ino_t ino, const char *name,
       goto exit;
     }
 
+#if COPYUP_ON_SETXATTR
   node = get_node_up (lo, node);
   if (node == NULL)
     {
       fuse_reply_err (req, errno);
       goto exit;
     }
+#endif
 
   sprintf (path, "%s/%s", node->layer->path, node->path);
   if (TEMP_FAILURE_RETRY( lsetxattr (path, name, value, size, flags) < 0))
@@ -2079,12 +2082,14 @@ ovl_removexattr (fuse_req_t req, fuse_ino_t ino, const char *name)
       goto exit;
     }
 
+#if COPYUP_ON_SETXATTR
   node = get_node_up (lo, node);
   if (node == NULL)
     {
       fuse_reply_err (req, errno);
       goto exit;
     }
+#endif
 
   sprintf (path, "%s/%s", node->layer->path, node->path);
   if (TEMP_FAILURE_RETRY (removexattr (path, name)))
