@@ -739,7 +739,11 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
           child = hash_lookup (n->children, &key);
           if (child)
             {
+              if (!child->loaded)
+                child->layer = it;  // adjust layer
+
               child->loaded = 1;
+
               if (it->low)
                 child->present_lowerdir = 1;
               continue;
