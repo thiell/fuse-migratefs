@@ -93,7 +93,7 @@ static uid_t saved_uid;  // could be replaced by getresuid(..., suid)
 
 #if VERB_LEVEL > 0
 #define verb_print(fmt, ...) \
-            do { fprintf(stderr, fmt, __VA_ARGS__); } while (0)
+            do { fprintf(stderr, "version=" VERSION " " fmt, __VA_ARGS__); } while (0)
 #else
 #define verb_print(fmt, ...) do {} while (0)
 #endif
