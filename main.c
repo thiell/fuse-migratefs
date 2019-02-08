@@ -2092,7 +2092,7 @@ ovl_removexattr (fuse_req_t req, fuse_ino_t ino, const char *name)
 #endif
 
   sprintf (path, "%s/%s", node->layer->path, node->path);
-  if (TEMP_FAILURE_RETRY (removexattr (path, name)))
+  if (TEMP_FAILURE_RETRY (lremovexattr (path, name)))
     {
       fuse_reply_err (req, errno);
       goto exit;
