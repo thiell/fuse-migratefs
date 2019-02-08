@@ -203,7 +203,7 @@ struct ovl_node
   int lookups;
   ino_t ino;
 
-  unsigned int present_lowerdir : 1;
+  //unsigned int present_lowerdir : 1;
   //unsigned int do_unlink : 1;
   //unsigned int do_rmdir : 1;
   unsigned int loaded : 1;
@@ -321,79 +321,6 @@ has_prefix (const char *str, const char *pref)
     }
   return false;
 }
-
-static int
-hide_node (struct ovl_data *lo, struct ovl_node *node, bool unlink_src)
-{
-#if 0
-  char dest[PATH_MAX];
-  char *newpath;
-
-  asprintf (&newpath, "%lu", get_next_wd_counter ());
-  if (newpath == NULL)
-    {
-      unlink (dest);
-      return -1;
-    }
-
-  assert (node->layer == get_upper_layer (lo));
-
-  /* Might be leftover from a previous run.  */
-  unlinkat (lo->workdir_fd, newpath, 0);
-  unlinkat (lo->workdir_fd, newpath, AT_REMOVEDIR);
-
-  if (unlink_src)
-    {
-      /* If the atomic rename+mknod failed, then fallback into doing it in two steps.  */
-      if (syscall (SYS_renameat2, node_dirfd (node), node->path, lo->workdir_fd,
-                   newpath, RENAME_WHITEOUT) < 0)
-        {
-          if (renameat (node_dirfd (node), node->path, lo->workdir_fd, newpath) < 0)
-            {
-              free (newpath);
-              return -1;
-            }
-          if (node->parent)
-            {
-              if (create_whiteout (lo, node->parent, node->name, false) < 0)
-                return -1;
-            }
-        }
-    }
-  else
-    {
-      if (node_dirp (node))
-        {
-          if (mkdirat (lo->workdir_fd, newpath, 0700) < 0)
-            {
-              free (newpath);
-              return -1;
-            }
-        }
-      else
-        {
-          if (linkat (node_dirfd (node), node->path, lo->workdir_fd, newpath, 0) < 0)
-            {
-              free (newpath);
-              return -1;
-            }
-        }
-    }
-  node->hidden_dirfd = lo->workdir_fd;
-  free (node->path);
-  node->path = newpath;
-  node->hidden = 1;
-  node->parent = NULL;
-
-  if (node_dirp (node))
-    node->do_rmdir = 1;
-  else
-    node->do_unlink = 1;
-  return 0;
-#endif
-    return -1;
-}
-
 
 static int
 rpl_stat (fuse_req_t req, struct ovl_node *node, struct stat *st)
@@ -553,13 +480,8 @@ make_ovl_node (const char *path, struct ovl_layer *layer, const char *name, ino_
   ret->last_layer = NULL;
   ret->parent = parent;
   ret->lookups = 0;
-  //ret->do_unlink = 0;
-  //ret->hidden = 0;
-  //ret->do_rmdir = 0;
   ret->layer = layer;
   ret->ino = ino;
-  ret->present_lowerdir = 0;
-  //ret->hidden_dirfd = -1;
   ret->name = strdup (name);
   if (ret->name == NULL)
     {
@@ -604,7 +526,6 @@ make_ovl_node (const char *path, struct ovl_layer *layer, const char *name, ino_
       strcpy (path, ret->path);
       for (it = layer; it; it = it->next)
         {
-          ssize_t s;
           int fd = TEMP_FAILURE_RETRY (openat (it->fd, path, O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_PATH));
           if (fd < 0)
             continue;
@@ -705,7 +626,6 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
       for (;;)
         {
           struct ovl_node key;
-          const char *wh;
           struct ovl_node *child = NULL;
           char node_path[PATH_MAX + 1];
 
@@ -742,11 +662,7 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
             {
               if (!child->loaded)
                 child->layer = it;  // adjust layer
-
               child->loaded = 1;
-
-              if (it->low)
-                child->present_lowerdir = 1;
               continue;
             }
 
@@ -902,8 +818,6 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
 
       for (it = lo->layers; it; it = it->next)
         {
-          const char *wh_name;
-
           sprintf (path, "%s/%s", pnode->path, name);
           ret = TEMP_FAILURE_RETRY (fstatat (it->fd, path, &st, AT_SYMLINK_NOFOLLOW));
           if (ret < 0)
@@ -1155,7 +1069,6 @@ ovl_do_readdir (fuse_req_t req, fuse_ino_t ino, size_t size,
         remaining -= entsize;
       }
   fuse_reply_buf (req, buffer, size - remaining);
- exit:
   free (buffer);
 }
 
@@ -1826,67 +1739,6 @@ update_paths (struct ovl_node *node)
   return 0;
 }
 
-#if 0
-static int
-empty_dir (struct ovl_data *lo, struct ovl_node *node)
-{
-  DIR *dp;
-  int fd;
-  struct dirent *dent;
-
-  struct ovl_layer *it;
-  for (it = lo->layers; it; it = it->next)
-    {
-      debug_print ("emptydir node %s layer %s\n", node->path, it->path);
-
-      fd = TEMP_FAILURE_RETRY (openat (it->fd, node->path, O_DIRECTORY));
-      if (fd < 0)
-        {
-          if (node->last_layer != it && errno == ENOENT)
-            continue;
-          return -1;
-        }
-
-      dp = fdopendir (fd);
-      if (dp == NULL)
-        {
-          close (fd);
-          if (errno == ENOENT)
-            continue;
-          return -1;
-        }
-
-      for (;;)
-        {
-          errno = 0;
-          dent = readdir (dp);
-          if (dent == NULL)
-            {
-              if (errno)
-                {
-                  int saved_errno = errno;
-                  closedir (dp);
-                  errno = saved_errno;
-                  return -1;
-                }
-
-              break;
-            }
-          if (strcmp (dent->d_name, ".") == 0)
-            continue;
-          if (strcmp (dent->d_name, "..") == 0)
-            continue;
-          if (unlinkat (dirfd (dp), dent->d_name, 0) < 0)
-            unlinkat (dirfd (dp), dent->d_name, AT_REMOVEDIR);
-        }
-
-      closedir (dp);
-    }
-
-  return 0;
-}
-#endif
-
 static int
 do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
 {
@@ -1941,15 +1793,6 @@ do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
     }
   else
     {
-    /*
-      if (empty_dir (lo, node) < 0)
-        {
-          debug_print ("do_node_rm emptydir %s errno=%d\n", name, errno);
-          return errno;
-        }
-        */
-
-      //node->do_rmdir = 1;
       struct ovl_layer *it;
       int r = 0;
       ret = ENOENT;
@@ -1966,10 +1809,8 @@ do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
               ret = errno;
         }
     }
- //   }
-
-    //node_free(node);
-    //
+  //node_free(node);
+  //
   pnode = do_lookup_file (lo, parent, NULL);
   if (pnode == NULL)
     return ENOENT;
@@ -1977,18 +1818,7 @@ do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
   key.name = (char *) name;
   rm = hash_delete (pnode->children, &key);
   if (rm)
-    {
-/*
-      ret = hide_node (lo, rm, true);
-      if (ret < 0)
-        {
-          fuse_reply_err (req, errno);
-          return;
-        }
-
-*/
       node_free (rm);
-    }
 
   return ret;
 }
@@ -2612,8 +2442,6 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
 
 error:
   ret = -1;
-
-cleanup:
   saved_errno = errno;
   if (destfd >= 0)
     close (destfd);
@@ -2622,102 +2450,6 @@ cleanup:
   fuse_reply_err (req, ret == 0 ? 0 : errno);
 exit:
   FUSE_EXIT();
-
-#if 0
-  destnode = do_lookup_file (lo, newparent, newname);
-  if (destnode && !destnode->whiteout)
-    {
-      fuse_reply_err (req, EEXIST);
-      return;
-    }
-
-  newparentnode = get_node_up (lo, newparentnode);
-  if (newparentnode == NULL)
-    {
-      fuse_reply_err (req, errno);
-      return;
-    }
-
-  if (delete_whiteout (lo, -1, newparentnode, newname) < 0)
-    {
-      fuse_reply_err (req, errno);
-      return;
-    }
-
-  sprintf (wd_tmp_file_name, "%lu", get_next_wd_counter ());
-
-  sprintf (path, "%s/%s", newparentnode->path, newname);
-
-  if (linkat (node_dirfd (newparentnode), node->path, lo->workdir_fd, wd_tmp_file_name, 0) < 0)
-    {
-      fuse_reply_err (req, errno);
-      return;
-    }
-
-  if (renameat (lo->workdir_fd, wd_tmp_file_name, node_dirfd (newparentnode), path) < 0)
-    {
-      fuse_reply_err (req, errno);
-      return;
-    }
-  else
-    {
-      int dfd = TEMP_FAILURE_RETRY (openat (node_dirfd (newparentnode), path, O_WRONLY|O_NONBLOCK));
-      if (dfd >= 0)
-        {
-          bool set = false;
-          int sfd = TEMP_FAILURE_RETRY (openat (node_dirfd (node), node->path, O_RDONLY|O_NONBLOCK));
-          if (sfd >= 0)
-            {
-              char origin_path[PATH_MAX + 10];
-              size_t s;
-
-              s = fgetxattr (sfd, PRIVILEGED_ORIGIN_XATTR, origin_path, sizeof (origin_path));
-              if (s > 0)
-                fsetxattr (dfd, PRIVILEGED_ORIGIN_XATTR, origin_path, s, 0);
-
-              s = fgetxattr (sfd, ORIGIN_XATTR, origin_path, sizeof (origin_path));
-              if (s > 0)
-                set = fsetxattr (dfd, ORIGIN_XATTR, origin_path, s, 0) == 0;
-
-              close (sfd);
-            }
-
-          if (! set)
-            fsetxattr (dfd, ORIGIN_XATTR, node->path, strlen (node->path), 0);
-          close (dfd);
-        }
-    }
-
-  node = make_ovl_node (path, get_upper_layer (lo), newname, node->ino, false, newparentnode);
-  if (node == NULL)
-    {
-      fuse_reply_err (req, ENOMEM);
-      return;
-    }
-
-  node = insert_node (newparentnode, node, true);
-  if (node == NULL)
-    {
-      fuse_reply_err (req, ENOMEM);
-      return;
-    }
-
-  memset (&e, 0, sizeof (e));
-
-  ret = rpl_stat (req, node, &e.attr);
-  if (ret)
-    {
-      fuse_reply_err (req, errno);
-      return;
-    }
-
-  e.ino = NODE_TO_INODE (node);
-  node->lookups++;
-  debug_print ("ovl_link: inc lookups=%d\n", node->lookups);
-  e.attr_timeout = ATTR_TIMEOUT;
-  e.entry_timeout = ENTRY_TIMEOUT;
-  fuse_reply_entry (req, &e);
-#endif
 }
 
 static void
@@ -2824,146 +2556,10 @@ ovl_flock (fuse_req_t req, fuse_ino_t ino,
 }
 
 static void
-ovl_rename_exchange (fuse_req_t req, fuse_ino_t parent, const char *name,
-                     fuse_ino_t newparent, const char *newname,
-                     unsigned int flags)
-{
-  struct ovl_node *pnode, *node, *destnode, *destpnode;
-  struct ovl_data *lo = ovl_data (req);
-  int ret;
-  int saved_errno;
-  int srcfd = -1;
-  int destfd = -1;
-  struct ovl_node *rm1, *rm2;
-  char *tmp;
-
-  node = do_lookup_file (lo, parent, name);
-  if (node == NULL)
-    {
-      fuse_reply_err (req, ENOENT);
-      return;
-    }
-
-  if (node_dirp (node))
-    {
-      node = load_dir (lo, node, node->layer, node->path, node->name);
-      if (node == NULL)
-        {
-          fuse_reply_err (req, errno);
-          return;
-        }
-
-      if (node->layer != get_upper_layer (lo) || node->present_lowerdir)
-        {
-          fuse_reply_err (req, EXDEV);
-          return;
-        }
-    }
-  pnode = node->parent;
-
-  destpnode = do_lookup_file (lo, newparent, NULL);
-  destnode = NULL;
-
-  pnode = get_node_up (lo, pnode);
-  if (pnode == NULL)
-    goto error;
-
-  ret = TEMP_FAILURE_RETRY (openat (node_dirfd (pnode), pnode->path, O_DIRECTORY));
-  if (ret < 0)
-    goto error;
-  srcfd = ret;
-
-  destpnode = get_node_up (lo, destpnode);
-  if (destpnode == NULL)
-    goto error;
-
-  ret = TEMP_FAILURE_RETRY (openat (node_dirfd (destpnode), destpnode->path, O_DIRECTORY));
-  if (ret < 0)
-    goto error;
-  destfd = ret;
-
-  destnode = do_lookup_file (lo, newparent, newname);
-
-  node = get_node_up (lo, node);
-  if (node == NULL)
-    goto error;
-
-  if (destnode == NULL)
-    {
-      errno = ENOENT;
-      goto error;
-    }
-  if (node_dirp (node) && destnode->present_lowerdir)
-    {
-      fuse_reply_err (req, EXDEV);
-      return;
-    }
-  destnode = get_node_up (lo, destnode);
-  if (destnode == NULL)
-    goto error;
-
-
-  ret = syscall (SYS_renameat2, srcfd, name, destfd, newname, flags);
-  if (ret < 0)
-    goto error;
-
-  rm1 = hash_delete (destpnode->children, destnode);
-  rm2 = hash_delete (pnode->children, node);
-
-  tmp = node->path;
-  node->path = destnode->path;
-  destnode->path = tmp;
-
-  tmp = node->name;
-  node->name = destnode->name;
-  destnode->name = tmp;
-
-  node = insert_node (destpnode, node, true);
-  if (node == NULL)
-    {
-      node_free (rm1);
-      node_free (rm2);
-      goto error;
-    }
-  destnode = insert_node (pnode, destnode, true);
-  if (destnode == NULL)
-    {
-      node_free (rm1);
-      node_free (rm2);
-      goto error;
-    }
-  if ((update_paths (node) < 0) || (update_paths (destnode) < 0))
-    goto error;
-
-#if 0
-  if (delete_whiteout (lo, destfd, NULL, newname) < 0)
-    goto error;
-#endif
-
-  ret = 0;
-  goto cleanup;
-
- error:
-  ret = -1;
-
- cleanup:
-  saved_errno = errno;
-  if (srcfd >= 0)
-    close (srcfd);
-  if (destfd >= 0)
-    close (destfd);
-  errno = saved_errno;
-
-  fuse_reply_err (req, ret == 0 ? 0 : errno);
-}
-
-static void
 ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
                    fuse_ino_t newparent, const char *newname,
                    unsigned int flags)
 {
-  FUSE_ENTER(req);
-
   struct ovl_node *pnode, *node, *destnode, *destpnode;
   struct ovl_data *lo = ovl_data (req);
   struct ovl_layer *layer;
@@ -2983,7 +2579,7 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
   if (node == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      goto exit;
+      return;
     }
 
   layer = node->layer;
@@ -3000,7 +2596,7 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
   if (destpnode == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      goto exit;
+      return;
     }
 
   debug_print ("ovl_rename_direct destpnode path=%s layer=%s\n",
@@ -3062,12 +2658,6 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
         }
     }
 
-/*
-  destpnode = get_node_up (lo, destpnode);
-  if (destpnode == NULL)
-    goto error;
-*/
-
   ret = TEMP_FAILURE_RETRY (openat (layer->fd, destpnode->path, O_DIRECTORY));
   if (ret < 0)
     goto error;
@@ -3076,427 +2666,33 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
   key.name = (char *) newname;
   destnode = hash_lookup (destpnode->children, &key);
 
-/*
-      node = get_node_up (lo, node);
-      if (node == NULL)
-        goto error;
-*/
-
-      if (flags & RENAME_NOREPLACE && destnode)
-        {
-          errno = EEXIST;
-          debug_print ("ovl_rename_direct NOREPLACE error destnode %s already exists\n", destnode->path);
-          goto error;
-        }
-    /* we cannot do do_node_rm here because of the following POSIX rule:
-     * rename returns EEXIST or ENOTEMPTY if the 'to' argument is a directory and is not empty"
-     * so let's try to let renameat() handle it
-     * concern: rm in lower layers??
-      if (destnode)
-        {
-          debug_print ("ovl_rename_direct destnode %s already exists in layer %s\n",
-                       destnode->path, destnode->layer->path);
-          ret = do_node_rm(req, NODE_TO_INODE(destpnode), newname, node_dirp(destnode));
-          debug_print ("ovl_rename_direct do_node_rm ret=%d\n", ret);
-          if (ret < 0)
-              goto error;
-        }
-      */
-
-      ret = renameat (srcfd, name, destfd, newname);
-      if (ret < 0)
-        {
-          debug_print ("ovl_rename_direct renameat failed errno=%d\n", errno);
-          goto error;
-        }
-
-
-    //}
-
-#if 0
-  pnode = node->parent;
-
-  destpnode = do_lookup_file (lo, newparent, NULL);
-  destnode = NULL;
-
-  //pnode = get_node_up (lo, pnode);
-  //if (pnode == NULL)
-  //  goto error;
-
-  ret = TEMP_FAILURE_RETRY (openat (node_dirfd (pnode), pnode->path, O_DIRECTORY));
-  if (ret < 0)
-    goto error;
-  srcfd = ret;
-
-  destpnode = get_node_up (lo, destpnode);
-  if (destpnode == NULL)
-    goto error;
-
-  ret = TEMP_FAILURE_RETRY (openat (node_dirfd (destpnode), destpnode->path, O_DIRECTORY));
-  if (ret < 0)
-    goto error;
-  destfd = ret;
-
-  key.name = (char *) newname;
-  destnode = hash_lookup (destpnode->children, &key);
-
-  node = get_node_up (lo, node);
-  if (node == NULL)
-    goto error;
-
-  if (flags & RENAME_NOREPLACE && destnode && !destnode->whiteout)
-    {
-      errno = EEXIST;
-      goto error;
-    }
-
-  if (destnode)
-    {
-      size_t destnode_whiteouts = 0;
-
-      if (!destnode->whiteout && destnode->ino == node->ino)
-        goto error;
-
-      destnode_is_whiteout = destnode->whiteout;
-
-      if (!destnode->whiteout && node_dirp (destnode))
-        {
-          destnode = load_dir (lo, destnode, destnode->layer, destnode->path, destnode->name);
-          if (destnode == NULL)
-            goto error;
-
-          if (count_dir_entries (destnode, &destnode_whiteouts) > 0)
-            {
-              errno = ENOTEMPTY;
-              goto error;
-            }
-          if (destnode_whiteouts && empty_dir (lo, destnode) < 0)
-            goto error;
-        }
-
-      if (node_dirp (node) && create_missing_whiteouts (lo, node, destnode->path) < 0)
-        goto error;
-
-      if (destnode->lookups > 0)
-        node_free (destnode);
-      else
-        {
-          node_free (destnode);
-          destnode = NULL;
-        }
-
-      if (destnode)
-        {
-          /* If the node is still accessible then be sure we
-             can write to it.  Fix it to be done when a write is
-             really done, not now.  */
-          destnode = get_node_up (lo, destnode);
-          if (destnode == NULL)
-            {
-              fuse_reply_err (req, errno);
-              return;
-            }
-
-          if (hide_node (lo, destnode, false) < 0)
-            goto error;
-        }
-    }
-
-  /* If the destnode is a whiteout, first attempt to EXCHANGE the source and the destination,
-   so that with one operation we get both the rename and the whiteout created.  */
-  if (destnode_is_whiteout)
-    {
-      ret = syscall (SYS_renameat2, srcfd, name, destfd, newname, flags|RENAME_EXCHANGE);
-      if (ret == 0)
-        goto done;
-
-      /* If it fails for any reason, fallback to the more articulated method.  */
-    }
-
-  /* If the node is a directory we must ensure there is no whiteout at the
-     destination, otherwise the renameat2 will fail.  Create a .wh.$NAME style
-     whiteout file until the renameat2 is completed.  */
-  if (node_dirp (node))
-    {
-      ret = create_whiteout (lo, destpnode, newname, true);
-      if (ret < 0)
-        goto error;
-      unlinkat (destfd, newname, 0);
-    }
-
-  /* Try to create the whiteout atomically, if it fails do the
-     rename+mknod separately.  */
-  ret = syscall (SYS_renameat2, srcfd, name, destfd,
-                 newname, flags|RENAME_WHITEOUT);
-  if (ret < 0)
-    {
-      ret = syscall (SYS_renameat2, srcfd, name, destfd, newname, flags);
-      if (ret < 0)
-        goto error;
-
-      ret = create_whiteout (lo, pnode, name, false);
-      if (ret < 0)
-        goto error;
-    }
-
-  if (delete_whiteout (lo, destfd, NULL, newname) < 0)
-    goto error;
-
- done:
-  hash_delete (pnode->children, node);
-
-  free (node->name);
-  node->name = strdup (newname);
-  if (node->name == NULL)
-    {
-      ret = -1;
-      goto error;
-    }
-
-  node = insert_node (destpnode, node, true);
-  if (node == NULL)
-    goto error;
-  if (update_paths (node) < 0)
-    goto error;
-
-  ret = 0;
-  goto cleanup;
-
- error:
-  ret = -1;
-
- cleanup:
-  saved_errno = errno;
-  if (srcfd >= 0)
-    close (srcfd);
-  if (destfd >= 0)
-    close (destfd);
-  errno = saved_errno;
-
-  fuse_reply_err (req, ret == 0 ? 0 : errno);
-
-
-#####j
-
-  struct ovl_layer *it;
-  struct ovl_node *pnode, *node, *destnode, *destpnode;
-  struct ovl_data *lo = ovl_data (req);
-  int ret;
-  int saved_errno;
-  int srcfd = -1;
-  int destfd = -1;
-  struct ovl_node key;
-  bool destnode_is_whiteout = false;
-
-  debug_print ("ovl_rename_direct path=%s name=%s newname=%s\n",
-                ((struct ovl_node *)parent)->path,
-                name, newname);
-
-  node = do_lookup_file (lo, parent, name);
-  if (node == NULL)
-    {
-      fuse_reply_err (req, ENOENT);
-      goto exit;
-    }
-  destpnode = do_lookup_file (lo, newparent, NULL);
-  if (destpnode == NULL)
-    {
-      fuse_reply_err (req, ENOENT);
-      goto exit;
-    }
-
-  ret = ENOENT;
-  for (it = node->layer; it; it = it->next)
-    {
-      debug_print ("ovl_rename_direct path=%s layer=%s destpnode=%s newname=%s\n",
-                        node->path, it->path, destpnode, newname);
-
-      if (TEMP_FAILURE_RETRY(renameat (it->fd, node->path, it->fd, newname)) < 0)
-        {
-          debug_print ("ovl_rename_direct renameat errno=%d\n", errno);
-          if (ret != 0)
-            ret = errno;
-        }
-      else
-          ret = 0;  // one rename successfull is enough
-    }
-
-  if (ret == 0)
-    {
-      pnode = node->parent;
-
-      hash_delete (pnode->children, node);
-      free (node->name);
-      node->name = strdup (newname);
-      if (node->name == NULL)
-        {
-          ret = errno;
-          goto error;
-        }
-
-      node = insert_node (destpnode, node, true);
-      if (node == NULL)
-        {
-          ret = errno;
-          goto error;
-        }
-      if (update_paths (node) < 0)
-        {
-          ret = errno;
-          goto error;
-        }
-    }
-
-error:
-  fuse_reply_err (req, ret);
-  FUSE_EXIT();
-
-
-
-
-  if (node_dirp (node))
-    {
-      node = load_dir (lo, node, node->layer, node->path, node->name);
-      if (node == NULL)
-        {
-          fuse_reply_err (req, errno);
-          goto exit;
-        }
-
-      if (node->layer != get_upper_layer (lo) || node->present_lowerdir)
-        {
-          fuse_reply_err (req, EXDEV);
-          goto exit;
-        }
-    }
-  pnode = node->parent;
-
-  destpnode = do_lookup_file (lo, newparent, NULL);
-  destnode = NULL;
-
-  pnode = get_node_up (lo, pnode);
-  if (pnode == NULL)
-    goto error;
-
-  ret = TEMP_FAILURE_RETRY (openat (node_dirfd (pnode), pnode->path, O_DIRECTORY));
-  if (ret < 0)
-    goto error;
-  srcfd = ret;
-
-  destpnode = get_node_up (lo, destpnode);
-  if (destpnode == NULL)
-    goto error;
-
-  ret = TEMP_FAILURE_RETRY (openat (node_dirfd (destpnode), destpnode->path, O_DIRECTORY));
-  if (ret < 0)
-    goto error;
-  destfd = ret;
-
-  key.name = (char *) newname;
-  destnode = hash_lookup (destpnode->children, &key);
-
-  node = get_node_up (lo, node);
-  if (node == NULL)
-    goto error;
-
   if (flags & RENAME_NOREPLACE && destnode)
     {
       errno = EEXIST;
+      debug_print ("ovl_rename_direct NOREPLACE error destnode %s already exists\n", destnode->path);
       goto error;
     }
-
-  if (destnode)
-    {
-      size_t destnode_whiteouts = 0;
-
-      if (destnode->ino == node->ino)
+  /* we cannot do do_node_rm here because of the following POSIX rule:
+   * rename returns EEXIST or ENOTEMPTY if the 'to' argument is a directory and is not empty"
+   * so let's try to let renameat() handle it
+   * concern: rm in lower layers??
+    if (destnode)
+      {
+        debug_print ("ovl_rename_direct destnode %s already exists in layer %s\n",
+                     destnode->path, destnode->layer->path);
+        ret = do_node_rm(req, NODE_TO_INODE(destpnode), newname, node_dirp(destnode));
+        debug_print ("ovl_rename_direct do_node_rm ret=%d\n", ret);
+        if (ret < 0)
+          goto error;
+      }
+    */
+    ret = TEMP_FAILURE_RETRY (renameat (srcfd, name, destfd, newname));
+    if (ret < 0)
+      {
+        debug_print ("ovl_rename_direct renameat failed errno=%d\n", errno);
         goto error;
+      }
 
-      destnode_is_whiteout = false; //destnode->whiteout;
-
-      if (node_dirp (destnode))
-        {
-          destnode = load_dir (lo, destnode, destnode->layer, destnode->path, destnode->name);
-          if (destnode == NULL)
-            goto error;
-
-          if (count_dir_entries (destnode, &destnode_whiteouts) > 0)
-            {
-              errno = ENOTEMPTY;
-              goto error;
-            }
-          if (destnode_whiteouts && empty_dir (lo, destnode) < 0)
-            goto error;
-        }
-
-
-      if (destnode->lookups > 0)
-        node_free (destnode);
-      else
-        {
-          node_free (destnode);
-          destnode = NULL;
-        }
-
-      if (destnode)
-        {
-          /* If the node is still accessible then be sure we
-             can write to it.  Fix it to be done when a write is
-             really done, not now.  */
-          destnode = get_node_up (lo, destnode);
-          if (destnode == NULL)
-            {
-              fuse_reply_err (req, errno);
-              goto exit;
-            }
-
-          if (hide_node (lo, destnode, false) < 0)
-            goto error;
-        }
-    }
-
-  /* If the destnode is a whiteout, first attempt to EXCHANGE the source and the destination,
-   so that with one operation we get both the rename and the whiteout created.  */
-  if (destnode_is_whiteout)
-    {
-      ret = syscall (SYS_renameat2, srcfd, name, destfd, newname, flags|RENAME_EXCHANGE);
-      if (ret == 0)
-        goto done;
-
-      /* If it fails for any reason, fallback to the more articulated method.  */
-    }
-
-
- done:
-  hash_delete (pnode->children, node);
-
-  free (node->name);
-  node->name = strdup (newname);
-  if (node->name == NULL)
-      goto error;
-
-  node = insert_node (destpnode, node, true);
-  if (node == NULL)
-    goto error;
-  if (update_paths (node) < 0)
-    goto error;
-
-  ret = 0;
-  goto cleanup;
-
- error:
-  ret = -1;
-
- cleanup:
-  saved_errno = errno;
-  if (srcfd >= 0)
-    close (srcfd);
-  if (destfd >= 0)
-    close (destfd);
-  errno = saved_errno;
-
-#endif
- done:
   hash_delete (pnode->children, node);
 
   free (node->name);
@@ -3528,8 +2724,6 @@ cleanup:
   errno = saved_errno;
 
   fuse_reply_err (req, ret == 0 ? 0 : errno);
-exit:
-  FUSE_EXIT();
 }
 
 static void
@@ -3537,13 +2731,17 @@ ovl_rename (fuse_req_t req, fuse_ino_t parent, const char *name,
            fuse_ino_t newparent, const char *newname,
            unsigned int flags)
 {
+  FUSE_ENTER(req);
+
   debug_print ("ovl_rename(ino=%" PRIu64 "s, name=%s , ino=%" PRIu64 "s, name=%s)\n",
                parent, name, newparent, newname);
 
   if (flags & RENAME_EXCHANGE)
-    ovl_rename_exchange (req, parent, name, newparent, newname, flags);
+    fuse_reply_err (req, ENOTSUP);
   else
     ovl_rename_direct (req, parent, name, newparent, newname, flags);
+
+  FUSE_EXIT();
 }
 
 static void
@@ -3617,42 +2815,6 @@ ovl_readlink (fuse_req_t req, fuse_ino_t ino)
   FUSE_EXIT();
 }
 
-static int
-hide_all (struct ovl_data *lo, struct ovl_node *node)
-{
-  struct ovl_node **nodes;
-  size_t i, nodes_size;
-
-  node = load_dir (lo, node, node->layer, node->path, node->name);
-  if (node == NULL)
-    return -1;
-
-  nodes_size = hash_get_n_entries (node->children) + 2;
-  nodes = malloc (sizeof (struct ovl_node *) * nodes_size);
-  if (nodes == NULL)
-    return -1;
-
-  nodes_size = hash_get_entries (node->children, (void **) nodes, nodes_size);
-  for (i = 0; i < nodes_size; i++)
-    {
-      struct ovl_node *it;
-      int ret;
-
-      it = nodes[i];
-      ret = create_whiteout (lo, node, it->name, false);
-      node_free (it);
-
-      if (ret < 0)
-        {
-          free(nodes);
-          return ret;
-        }
-    }
-
-  free (nodes);
-  return 0;
-}
-
 static void
 ovl_mknod (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev_t rdev)
 {
@@ -3710,14 +2872,6 @@ ovl_mknod (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev
       fuse_reply_err (req, ENOMEM);
       goto exit;
     }
-
-#if 0
-  if (delete_whiteout (lo, -1, pnode, name) < 0)
-    {
-      fuse_reply_err (req, errno);
-      return;
-    }
-#endif
 
   memset (&e, 0, sizeof (e));
 
@@ -3803,22 +2957,6 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
       FUSE_EXIT();
       return;
     }
-#if 0
-  ret = hide_all (lo, node);
-  if (ret < 0)
-    {
-      fuse_reply_err (req, errno);
-      FUSE_EXIT();
-      return;
-    }
-
-  if (delete_whiteout (lo, -1, pnode, name) < 0)
-    {
-      fuse_reply_err (req, errno);
-      FUSE_EXIT();
-      return;
-    }
-#endif
 
   memset (&e, 0, sizeof (e));
 
