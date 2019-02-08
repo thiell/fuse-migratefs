@@ -1566,7 +1566,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   int ret = -1;
   int dfd = -1, sfd = -1, parentfd;
   struct stat st;
-  const size_t buf_size = 1 << 20;
+  const size_t buf_size = 1 << 22;  // 4MB
   char *buf = NULL;
   struct timespec times[2];
   char wd_tmp_file_name[32];
