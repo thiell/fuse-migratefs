@@ -1305,6 +1305,7 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
   int parentfd;
   char *buf = NULL;
   int saved_errno;
+  bool tmpdir_cleanup = false;
   char wd_tmp_file_name[64];
 
   debug_print ("create_directory name=%s parent->path=%s\n", name, parent->path);
@@ -1339,6 +1340,8 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
   debug_print ("create_directory mkdirat=%d errno=%d\n", ret, errno);
   if (ret < 0)
     goto out;
+
+  tmpdir_cleanup = true;
 
   ret = dfd = TEMP_FAILURE_RETRY (openat (parentfd, wd_tmp_file_name, O_RDONLY));
   debug_print ("create_directory openat wd_tmp fd=%d errno=%d\n", ret, errno);
@@ -1388,13 +1391,16 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
                       errno, FUSE_GETCURRENTUID(), name, parent->path);
         }
     }
+  else
+    tmpdir_cleanup = false;
+
 out:
   if (dfd >= 0)
     close (dfd);
   if (buf)
     free (buf);
 
-  if (ret < 0)
+  if (tmpdir_cleanup)
     {
       saved_errno = errno;
       if (TEMP_FAILURE_RETRY (unlinkat (parentfd, wd_tmp_file_name, AT_REMOVEDIR)) < 0)
