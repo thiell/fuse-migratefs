@@ -1377,7 +1377,7 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
   ret = TEMP_FAILURE_RETRY (renameat (parentfd, wd_tmp_file_name, dirfd, name));
   if (ret < 0)
     {
-      if (errno == ENOTEMPTY)
+      if (errno == ENOTEMPTY || errno == EEXIST)
         {
           // assume directory was created by another cluster node
           ret = 0;
