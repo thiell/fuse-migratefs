@@ -441,13 +441,10 @@ do_forget (fuse_ino_t ino, uint64_t nlookup)
 static void
 ovl_forget (fuse_req_t req, fuse_ino_t ino, uint64_t nlookup)
 {
-  FUSE_ENTER(req);
-
+  // this is safe to proceed as root
   debug_print ("ovl_forget(ino=%" PRIu64 ", nlookup=%lu)\n", ino, nlookup);
   do_forget (ino, nlookup);
   fuse_reply_none (req);
-
-  FUSE_EXIT();
 }
 
 static size_t
