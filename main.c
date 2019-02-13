@@ -680,6 +680,7 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
           if (insert_node (n, child, false) == NULL)
             {
               errno = ENOMEM;
+              closedir (dp);
               return NULL;
             }
 
