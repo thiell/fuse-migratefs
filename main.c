@@ -1440,7 +1440,13 @@ create_node_directory (struct ovl_data *lo, struct ovl_node *src)
 
   ret = TEMP_FAILURE_RETRY (fstat (sfd, &st));
   if (ret < 0)
-    return ret;
+    {
+      saved_errno = errno;
+      close(sfd);
+      verb_print ("create_node_directory=failed call=fstat errno=%d path=%s\n", saved_errno, src->path);
+      errno = saved_errno;
+      return ret;
+    }
 
   times[0] = st.st_atim;
   times[1] = st.st_mtim;
@@ -1462,16 +1468,6 @@ create_node_directory (struct ovl_data *lo, struct ovl_node *src)
 
   if (ret == 0)
       src->layer = get_upper_layer (lo);
-
-#if 0
-  if (ret == 0)
-    {
-      src->layer = get_upper_layer (lo);
-
-      if (src->parent)
-        delete_whiteout (lo, -1, src->parent, src->name);
-    }
-#endif
 
   return ret;
 }
