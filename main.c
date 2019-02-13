@@ -1281,7 +1281,13 @@ create_lower_directory (struct ovl_data *lo, int dirfd, struct ovl_node *node)
     }
 
   ret = mkdirat (parentfd, node->name, 0777);
-  debug_print ("create_lower_directory mkdirat=%d errno=%d\n", ret, errno);
+
+  if (ret == 0)
+    verb_print ("create_lower_directory=success parent=%s name=%s\n", node->parent->path, node->name);
+  else
+    verb_print ("create_lower_directory=failed call=mkdirat errno=%d parent=%s name=%s\n", errno,
+                node->parent->path, node->name);
+
   if (ret < 0 && errno == EEXIST)
     {
       ret = 0;
