@@ -278,6 +278,7 @@ ovl_init (void *userdata, struct fuse_conn_info *conn)
 {
   conn->want |= FUSE_CAP_DONT_MASK | FUSE_CAP_SPLICE_READ | FUSE_CAP_SPLICE_MOVE;
   conn->want &= ~FUSE_CAP_PARALLEL_DIROPS;
+  verb_print ("ovl_init: conn->want = 0x%x\n", conn->want);
 //  conn->want |= FUSE_IOCTL_UNRESTRICTED;
 }
 
