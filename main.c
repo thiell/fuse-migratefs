@@ -1620,9 +1620,11 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   if (sfd >= 0)
     close (sfd);
   if (dfd >= 0)
-    close (dfd);
-  if (ret < 0)
-    TEMP_FAILURE_RETRY (unlinkat (parentfd, wd_tmp_file_name, 0));
+    {
+      // temp file was created
+      close (dfd);
+      TEMP_FAILURE_RETRY (unlinkat (parentfd, wd_tmp_file_name, 0));
+    }
   if (parentfd >= 0)
     close (parentfd);
 
