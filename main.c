@@ -1484,7 +1484,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
 {
   int saved_errno;
   int ret = -1;
-  int dfd = -1, sfd = -1, parentfd;
+  int dfd = -1, sfd = -1, parentfd = -1;
   struct stat st;
   const size_t buf_size = 1 << 22;  // 4MB
   char *buf = NULL;
