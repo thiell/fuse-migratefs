@@ -2252,12 +2252,30 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
         }
     }
 
-  if ((to_set & FUSE_SET_ATTR_MODE) && fchmodat (dirfd, node->path, attr->st_mode, 0) < 0)
+  if (to_set & FUSE_SET_ATTR_MODE)
     {
-      debug_print ("ovl_setattr chmodat failed with errno=%d\n", errno);
-      fuse_reply_err (req, errno);
-      FUSE_EXIT();
-      return;
+      if (fchmodat (dirfd, node->path, attr->st_mode, 0) < 0)
+        {
+          debug_print ("ovl_setattr chmodat failed with errno=%d\n", errno);
+          fuse_reply_err (req, errno);
+          FUSE_EXIT();
+          return;
+        }
+      else
+        {
+          //
+          // if successful, change mode on lower layers too (best effort)
+          //
+          struct ovl_layer *it;
+
+          for (it = get_lower_layers(lo); it; it = it->next)
+            {
+              if (TEMP_FAILURE_RETRY (fchmodat (it->fd, node->path, attr->st_mode, 0)) < 0)
+                // non-fatal but log for further investigation
+                verb_print ("setattr=failed call=fchmodat on lower layer=%s mode=%o errno=%d path=%s\n",
+                            it->path, attr->st_mode, errno, node->path);
+            }
+        }
     }
 
   if (to_set & (FUSE_SET_ATTR_UID | FUSE_SET_ATTR_GID))
