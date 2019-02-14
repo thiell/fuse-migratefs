@@ -2294,6 +2294,21 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
           FUSE_EXIT();
           return;
         }
+      else
+        {
+          //
+          // if successful, change ownership on lower layers too (best effort)
+          //
+          struct ovl_layer *it;
+
+          for (it = get_lower_layers(lo); it; it = it->next)
+            {
+              if (TEMP_FAILURE_RETRY (fchownat (it->fd, node->path, uid, gid, AT_SYMLINK_NOFOLLOW)) < 0)
+                // non-fatal but log for further investigation
+                verb_print ("setattr=failed call=fchownat low=1 layer=%s uid=%d gid=%d errno=%d " \
+                            "path=%s\n", it->path, uid, gid, errno, node->path);
+            }
+        }
     }
 
   if (to_set & FUSE_SET_ATTR_SIZE)
