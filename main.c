@@ -1896,6 +1896,22 @@ ovl_setxattr (fuse_req_t req, fuse_ino_t ino, const char *name,
       fuse_reply_err (req, errno);
       goto exit;
     }
+  else
+    {
+      //
+      // if successful, setxattr on lower layers too (best effort)
+      //
+      struct ovl_layer *it;
+
+      for (it = get_lower_layers(lo); it; it = it->next)
+        {
+          sprintf (path, "%s/%s", it->path, node->path);
+          if (TEMP_FAILURE_RETRY (lsetxattr (path, name, value, size, flags) < 0))
+            // non-fatal but log for further investigation
+            verb_print ("setattr=failed call=lsetxattr low=1 layer=%s errno=%d path=%s\n",
+                        it->path, errno, node->path);
+        }
+    }
   fuse_reply_err (req, 0);
 exit:
   FUSE_EXIT();
