@@ -133,8 +133,6 @@ static void FUSE_ENTER(fuse_req_t req)
   saved_uid = ctx->uid;
   if (setresuid(-1, ctx->uid, -1) < 0)
     debug_print ("FUSE_EXIT: setresuid failed with errno=%d\n", errno);
-
-  umask(ctx->umask);
 }
 
 static void FUSE_EXIT()
@@ -1345,7 +1343,7 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
      }
 
   ret = mkdirat (parentfd, wd_tmp_file_name, mode);
-  debug_print ("create_directory mkdirat=%d errno=%d\n", ret, errno);
+  debug_print ("create_directory mkdirat=%d mode=%o errno=%d\n", ret, mode, errno);
   if (ret < 0)
     goto out;
 
@@ -3227,6 +3225,7 @@ main (int argc, char *argv[])
     }
 
   set_limits ();
+  umask (0);
 
   printf ("UPPERDIR=%s\n", lo.upperdir);
   printf ("LOWERDIR=%s\n", lo.lowerdir);
