@@ -276,7 +276,7 @@ ovl_init (void *userdata, struct fuse_conn_info *conn)
 {
   conn->want |= FUSE_CAP_DONT_MASK | FUSE_CAP_SPLICE_READ | FUSE_CAP_SPLICE_MOVE;
   conn->want &= ~FUSE_CAP_PARALLEL_DIROPS;
-  verb_print ("ovl_init: conn->want = 0x%x\n", conn->want);
+  verb_print ("ovl_init: conn->want=0x%x\n", conn->want);
 //  conn->want |= FUSE_IOCTL_UNRESTRICTED;
 }
 
@@ -1641,7 +1641,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
 
       for (it = get_lower_layers(lo); it; it = it->next)
           if (TEMP_FAILURE_RETRY (unlinkat (it->fd, node->path, 0)) < 0)
-            verb_print ("copyup=failed to remove file from lower layer %s errno=%d path=%s\n",
+            verb_print ("copyup=failed call=unlinkat low=1 layer=%s errno=%d path=%s\n",
                         it->path, errno, node->path);
     }
   // end optional
@@ -2272,7 +2272,7 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
             {
               if (TEMP_FAILURE_RETRY (fchmodat (it->fd, node->path, attr->st_mode, 0)) < 0)
                 // non-fatal but log for further investigation
-                verb_print ("setattr=failed call=fchmodat on lower layer=%s mode=%o errno=%d path=%s\n",
+                verb_print ("setattr=failed call=fchmodat low=1 layer=%s mode=%o errno=%d path=%s\n",
                             it->path, attr->st_mode, errno, node->path);
             }
         }
