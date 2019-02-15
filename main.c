@@ -1645,8 +1645,11 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
 
       for (it = get_lower_layers(lo); it; it = it->next)
           if (TEMP_FAILURE_RETRY (unlinkat (it->fd, node->path, 0)) < 0)
-            verb_print ("copyup=failed call=unlinkat low=1 layer=%s errno=%d path=%s\n",
-                        it->path, errno, node->path);
+            {
+              if (errno != ENOENT)
+                verb_print ("copyup=failed call=unlinkat low=1 layer=%s errno=%d path=%s\n",
+                            it->path, errno, node->path);
+            }
     }
   // end optional
 #endif
@@ -1911,9 +1914,12 @@ ovl_setxattr (fuse_req_t req, fuse_ino_t ino, const char *name,
         {
           sprintf (path, "%s/%s", it->path, node->path);
           if (TEMP_FAILURE_RETRY (lsetxattr (path, name, value, size, flags) < 0))
-            // non-fatal but log for further investigation
-            verb_print ("setattr=failed call=lsetxattr low=1 layer=%s errno=%d path=%s\n",
-                        it->path, errno, node->path);
+            {
+              if (errno != ENOENT)
+                // non-fatal but log for further investigation
+                verb_print ("setattr=failed call=lsetxattr low=1 layer=%s errno=%d path=%s\n",
+                            it->path, errno, node->path);
+            }
         }
     }
   fuse_reply_err (req, 0);
@@ -2291,9 +2297,12 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
           for (it = get_lower_layers(lo); it; it = it->next)
             {
               if (TEMP_FAILURE_RETRY (fchmodat (it->fd, node->path, attr->st_mode, 0)) < 0)
-                // non-fatal but log for further investigation
-                verb_print ("setattr=failed call=fchmodat low=1 layer=%s mode=%o errno=%d path=%s\n",
-                            it->path, attr->st_mode, errno, node->path);
+                {
+                  if (errno != ENOENT)
+                    // non-fatal but log for further investigation
+                    verb_print ("setattr=failed call=fchmodat low=1 layer=%s mode=%o errno=%d path=%s\n",
+                                it->path, attr->st_mode, errno, node->path);
+                }
             }
         }
     }
@@ -2324,9 +2333,10 @@ ovl_setattr (fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, stru
           for (it = get_lower_layers(lo); it; it = it->next)
             {
               if (TEMP_FAILURE_RETRY (fchownat (it->fd, node->path, uid, gid, AT_SYMLINK_NOFOLLOW)) < 0)
-                // non-fatal but log for further investigation
-                verb_print ("setattr=failed call=fchownat low=1 layer=%s uid=%d gid=%d errno=%d " \
-                            "path=%s\n", it->path, uid, gid, errno, node->path);
+                if (errno != ENOENT)
+                    // non-fatal but log for further investigation
+                    verb_print ("setattr=failed call=fchownat low=1 layer=%s uid=%d gid=%d errno=%d " \
+                                "path=%s\n", it->path, uid, gid, errno, node->path);
             }
         }
     }
