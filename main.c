@@ -610,7 +610,11 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
     {
       int fd = TEMP_FAILURE_RETRY (openat (it->fd, path, O_DIRECTORY));
       if (fd < 0)
-        continue;
+        {
+          if (errno != ENOENT)
+            return NULL;        // propagate error including EACCES
+          continue;
+        }
 
       dp = fdopendir (fd);
       if (dp == NULL)
