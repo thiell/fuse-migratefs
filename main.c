@@ -888,16 +888,14 @@ ovl_lookup (fuse_req_t req, fuse_ino_t parent, const char *name)
   if (node == NULL)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT();
-      return;
+      goto exit;
     }
 
   err = rpl_stat (req, node, &e.attr);
   if (err)
     {
       fuse_reply_err (req, errno);
-      FUSE_EXIT();
-      return;
+      goto exit;
     }
 
   e.ino = NODE_TO_INODE (node);
@@ -907,6 +905,7 @@ ovl_lookup (fuse_req_t req, fuse_ino_t parent, const char *name)
   e.entry_timeout = ENTRY_TIMEOUT;
   fuse_reply_entry (req, &e);
 
+exit:
   FUSE_EXIT();
 }
 
@@ -1137,8 +1136,7 @@ ovl_listxattr (fuse_req_t req, fuse_ino_t ino, size_t size)
   if (node == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      FUSE_EXIT();
-      return;
+      goto exit;
     }
 
   if (size > 0)
@@ -1147,8 +1145,7 @@ ovl_listxattr (fuse_req_t req, fuse_ino_t ino, size_t size)
       if (buf == NULL)
         {
           fuse_reply_err (req, ENOMEM);
-          FUSE_EXIT();
-          return;
+          goto exit;
         }
     }
 
@@ -1163,6 +1160,7 @@ ovl_listxattr (fuse_req_t req, fuse_ino_t ino, size_t size)
 
   free (buf);
 
+exit:
   FUSE_EXIT();
 }
 
@@ -1183,8 +1181,7 @@ ovl_getxattr (fuse_req_t req, fuse_ino_t ino, const char *name, size_t size)
   if (node == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      FUSE_EXIT();
-      return;
+      goto exit;
     }
 
   if (size > 0)
@@ -1193,8 +1190,7 @@ ovl_getxattr (fuse_req_t req, fuse_ino_t ino, const char *name, size_t size)
       if (buf == NULL)
         {
           fuse_reply_err (req, ENOMEM);
-          FUSE_EXIT();
-          return;
+          goto exit;
         }
     }
 
@@ -1209,6 +1205,7 @@ ovl_getxattr (fuse_req_t req, fuse_ino_t ino, const char *name, size_t size)
 
   free (buf);
 
+exit:
   FUSE_EXIT();
 }
 
