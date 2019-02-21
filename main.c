@@ -26,6 +26,8 @@
 #define FUSE_USE_VERSION 32
 #define _FILE_OFFSET_BITS 64
 #define ENABLE_IOCTL 0
+#define MIGRATEFS_MT_MAX_IDLE_THREADS 10
+#define MIGRATEFS_MT_CLONE_FD false
 
 // VERB_LEVEL:
 // 0 = quiet
@@ -71,10 +73,18 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 
+#include <pthread.h>
+
 #define ATTR_TIMEOUT 0
 #define ENTRY_TIMEOUT 0
 
 #define NODE_TO_INODE(x) ((fuse_ino_t) x)
+
+/* Check GCC version, just to be safe */
+#if !defined(__GNUC__) || (__GNUC__ < 4) || (__GNUC_MINOR__ < 1)
+# error atomic ops work only with GCC newer than version 4.1
+#endif /* GNUC >= 4.1 */
+
 
 #if defined(__GNUC__) && (__GNUC__ > 4 || __GNUC__ == 4 && __GNUC_MINOR__ >= 6) && !defined __cplusplus
 _Static_assert (sizeof (fuse_ino_t) >= sizeof (uintptr_t),
@@ -87,10 +97,13 @@ struct _uintptr_to_must_hold_fuse_ino_t_dummy_struct
 };
 #endif
 
+static int ngroups;         // sysconf(_SC_NGROUPS_MAX)
 
-static int ngroups;
-static gid_t *suppl_gids;
-static uid_t saved_uid;  // could be replaced by getresuid(..., suid)
+static pthread_key_t key_suppl_gids;
+static pthread_key_t key_ctx_uid;
+static pthread_once_t key_once = PTHREAD_ONCE_INIT;
+static pthread_mutex_t ovl_node_global_lock;
+
 
 #if VERB_LEVEL > 0
 #define verb_print(fmt, ...) \
@@ -106,12 +119,29 @@ static uid_t saved_uid;  // could be replaced by getresuid(..., suid)
 #define debug_print(fmt, ...) do {} while (0)
 #endif
 
+static void
+make_keys()
+{
+  (void) pthread_key_create(&key_suppl_gids, &free);
+  (void) pthread_key_create(&key_ctx_uid, &free);
+}
 
 static void FUSE_ENTER(fuse_req_t req)
 {
   const struct fuse_ctx *ctx = fuse_req_ctx (req);
   int ret;
   int i;
+  gid_t *suppl_gids;
+  uid_t *ctx_uid_ptr;
+
+  (void) pthread_once(&key_once, make_keys);
+
+  if ((suppl_gids = pthread_getspecific(key_suppl_gids)) == NULL) {
+    suppl_gids = malloc(sizeof(*suppl_gids) * ngroups);
+    if (suppl_gids == NULL)
+      error (EXIT_FAILURE, ENOMEM, "cannot allocate memory");
+    (void) pthread_setspecific(key_suppl_gids, suppl_gids);
+  }
 
   ret = fuse_req_getgroups(req, sizeof(*suppl_gids) * ngroups, suppl_gids);
   if (ret < 0)
@@ -120,18 +150,26 @@ static void FUSE_ENTER(fuse_req_t req)
     }
   else
     {
-      ret = setgroups(ret, suppl_gids);
+      ret = syscall(SYS_setgroups, 1, suppl_gids);
       if (ret < 0)
         {
           debug_print ("setgroups failed with errno=%d\n", errno);
         }
     }
 
-  if (setresgid(-1, ctx->gid, -1) < 0)
+  // use direct syscall as the libc function will synchronize it for all threads
+  if (syscall(SYS_setresgid, -1, ctx->gid, -1) < 0)
     debug_print ("FUSE_EXIT: setresgid failed with errno=%d\n", errno);
 
-  saved_uid = ctx->uid;
-  if (setresuid(-1, ctx->uid, -1) < 0)
+  if ((ctx_uid_ptr = pthread_getspecific(key_ctx_uid)) == NULL) {
+    ctx_uid_ptr = malloc(sizeof(*ctx_uid_ptr));
+    if (ctx_uid_ptr == NULL)
+      error (EXIT_FAILURE, ENOMEM, "cannot allocate memory");
+     (void) pthread_setspecific(key_ctx_uid, ctx_uid_ptr);
+  }
+  *ctx_uid_ptr = ctx->uid;
+
+  if (syscall(SYS_setresuid, -1, ctx->uid, -1) < 0)
     debug_print ("FUSE_EXIT: setresuid failed with errno=%d\n", errno);
 }
 
@@ -139,15 +177,24 @@ static void FUSE_EXIT()
 {
   gid_t gid = 0;
 
-  saved_uid = 0;
-  if (setresuid(-1, 0, -1) < 0)
+  // use direct syscalls as the libc functions will synchronize all threads
+
+  if (syscall(SYS_setresuid, -1, 0, -1) < 0)
     debug_print ("FUSE_EXIT: setresuid failed with errno=%d\n", errno);
 
-  if (setresgid(-1, 0, -1) < 0)
+  if (syscall(SYS_setresgid, -1, 0, -1) < 0)
     debug_print ("FUSE_EXIT: setresgid failed with errno=%d\n", errno);
 
-  if (setgroups(1, &gid) < 0)
+  if (syscall(SYS_setgroups, 1, &gid) < 0)
     debug_print ("FUSE_EXIT: setgroups failed with errno=%d\n", errno);
+}
+
+
+static uid_t FUSE_GETCURRENTUID()
+{
+  uid_t *ctx_uid_ptr = pthread_getspecific(key_ctx_uid);
+  assert (ctx_uid_ptr != NULL);
+  return *ctx_uid_ptr;
 }
 
 
@@ -161,27 +208,44 @@ static void FUSE_ENTER_ROOTPRIV()
 
 static void FUSE_EXIT_ROOTPRIV()
 {
-  if (setresuid(-1, saved_uid, -1) < 0)
+  uid_t saved_ctx_uid = FUSE_GETCURRENTUID();
+
+  if (setresuid(-1, saved_ctx_uid, -1) < 0)
     verb_print ("FUSE_EXIT_ROOTPRIV: setresuid uid=%u failed with errno=%d\n",
-                saved_uid, errno);
+                saved_ctx_uid, errno);
 }
 
 
-static uid_t FUSE_GETCURRENTUID()
+/**
+ * Atomic type.
+ */
+typedef struct {
+    volatile int counter;
+} atomic_t;
+
+#define atomic_read(v) ((v)->counter)
+#define atomic_set(v,i) (((v)->counter) = (i))
+
+static inline void atomic_inc( atomic_t *v )
 {
-#if 1
-  return saved_uid;
-#else
-  uid_t ruid, euid = 99, suid;
-  int saved_errno = errno;
-
-  if (getresuid(&ruid, &euid, &suid) < 0)
-    verb_print ("FUSE_GETCURRENTUID: getresuid failed with errno=%d\n", errno);
-
-  errno = saved_errno;
-  return euid;
-#endif
+    (void)__sync_fetch_and_add(&v->counter, 1);
 }
+
+// Atomically decrements @v by 1.  Note that the guaranteed
+// useful range of an atomic_t is only 24 bits.
+static inline void atomic_dec( atomic_t *v )
+{
+    (void)__sync_fetch_and_sub(&v->counter, 1);
+}
+
+// Atomically adds @i to @v and returns true
+// if the result is negative or zero, or false
+// when result is greater than zero.
+static inline int atomic_sub_ne( int i, atomic_t *v )
+{
+    return (__sync_sub_and_fetch(&v->counter, i) <= 0);
+}
+
 
 struct ovl_layer
 {
@@ -198,15 +262,9 @@ struct ovl_node
   struct ovl_layer *layer, *last_layer;
   char *path;
   char *name;
-  int lookups;
+  atomic_t lookups;
   ino_t ino;
-
-  //unsigned int present_lowerdir : 1;
-  //unsigned int do_unlink : 1;
-  //unsigned int do_rmdir : 1;
   unsigned int loaded : 1;
-  //unsigned int hidden : 1;
-  //unsigned int whiteout : 1;
 };
 
 struct ovl_data
@@ -341,11 +399,13 @@ rpl_stat (fuse_req_t req, struct ovl_node *node, struct stat *st)
 
       st->st_nlink = 2;
 
+      pthread_mutex_lock (&ovl_node_global_lock);
       for (it = hash_get_first (node->children); it; it = hash_get_next (node->children, it))
         {
           if (node_dirp (it))
             st->st_nlink++;
         }
+      pthread_mutex_unlock (&ovl_node_global_lock);
     }
 
   return ret;
@@ -356,7 +416,7 @@ node_mark_all_free (void *p)
 {
   struct ovl_node *it, *n = (struct ovl_node *) p;
 
-  n->lookups = 0;
+  atomic_set(&n->lookups, 0);
 
   if (n->children)
     {
@@ -365,12 +425,14 @@ node_mark_all_free (void *p)
     }
 }
 
+// must be called with mutex locked
 static void
 node_free (void *p)
 {
   struct ovl_node *n = (struct ovl_node *) p;
   if (n == NULL)
     return;
+
   if (n->parent)
     {
       if (hash_lookup (n->parent->children, n) == n)
@@ -378,8 +440,8 @@ node_free (void *p)
       n->parent = NULL;
     }
 
-  if (n->lookups > 0)
-    return;
+  if (atomic_read(&n->lookups) > 0)
+      return;
 
   if (n->children)
     {
@@ -392,28 +454,13 @@ node_free (void *p)
       n->children = NULL;
     }
 
-#if 0
-  if (n->do_unlink || n->do_rmdir)
-    {
-      struct ovl_layer *it;
-
-      debug_print ("node_free path=%s do_unlink...\n", n->path);
-      for (it = n->layer; it; it = it->next)
-        {
-            debug_print ("node_free path=%s do_unlink layer %s\n",
-                              n->path, it->path);
-            int ret = unlinkat (it->fd, n->path, n->do_rmdir ? AT_REMOVEDIR : 0);
-            debug_print ("node_free unlinkat ret=%d errno=%d\n", ret, errno);
-        }
-    }
-#endif
-
   free (n->name);
   free (n->path);
   free (n);
   return;
 }
 
+// must be called with mutex locked
 static void
 do_forget (fuse_ino_t ino, uint64_t nlookup)
 {
@@ -424,15 +471,13 @@ do_forget (fuse_ino_t ino, uint64_t nlookup)
 
   n = (struct ovl_node *) ino;
 
-  //node_mark_all_free(n);
   debug_print ("do_forget: path=%s name=%s lookups=%d nlookup=%d\n",
-            n->path, n->name, n->lookups, nlookup);
-  //node_free (n);
-  n->lookups -= nlookup;
-  if (n->lookups <= 0)
+            n->path, n->name, atomic_read(&n->lookups), nlookup);
+
+  if (atomic_sub_ne(nlookup, &n->lookups))
     {
       debug_print ("do_forget: calling node_free path=%s name=%s\n",
-                n->path, n->name);
+                   n->path, n->name);
       node_free (n);
     }
 }
@@ -442,7 +487,9 @@ ovl_forget (fuse_req_t req, fuse_ino_t ino, uint64_t nlookup)
 {
   // this is safe to proceed as root
   debug_print ("ovl_forget(ino=%" PRIu64 ", nlookup=%lu)\n", ino, nlookup);
+  pthread_mutex_lock (&ovl_node_global_lock);
   do_forget (ino, nlookup);
+  pthread_mutex_unlock (&ovl_node_global_lock);
   fuse_reply_none (req);
 }
 
@@ -475,7 +522,7 @@ make_ovl_node (const char *path, struct ovl_layer *layer, const char *name, ino_
 
   ret->last_layer = NULL;
   ret->parent = parent;
-  ret->lookups = 0;
+  atomic_set(&ret->lookups, 0);
   ret->layer = layer;
   ret->ino = ino;
   ret->name = strdup (name);
@@ -542,8 +589,12 @@ make_ovl_node (const char *path, struct ovl_layer *layer, const char *name, ino_
 static struct ovl_node *
 insert_node (struct ovl_node *parent, struct ovl_node *item, bool replace)
 {
-  struct ovl_node *old = NULL, *prev_parent = item->parent;
+  struct ovl_node *old = NULL, *prev_parent;
   int ret;
+
+  pthread_mutex_lock (&ovl_node_global_lock);
+
+  prev_parent = item->parent;
 
   if (prev_parent)
     {
@@ -555,23 +606,28 @@ insert_node (struct ovl_node *parent, struct ovl_node *item, bool replace)
     {
       old = hash_delete (parent->children, item);
       if (old)
-        node_free (old);
+          node_free (old);
     }
 
   ret = hash_insert_if_absent (parent->children, item, (const void **) &old);
   if (ret < 0)
     {
       node_free (item);
+      pthread_mutex_unlock (&ovl_node_global_lock);
       errno = ENOMEM;
       return NULL;
     }
   if (ret == 0)
     {
       node_free (item);
+      pthread_mutex_unlock (&ovl_node_global_lock);
       return old;
     }
 
   item->parent = parent;
+  item->loaded = 1;                 // for load_dir()
+  atomic_inc(&item->lookups);
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   return item;
 }
@@ -603,8 +659,10 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
         return NULL;
     }
 
+  pthread_mutex_lock (&ovl_node_global_lock);
   for (nit = hash_get_first (n->children); nit; nit = hash_get_next (n->children, nit))
     nit->loaded = 0;
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   for (it = lo->layers; it; it = it->next)
     {
@@ -657,16 +715,18 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
               return NULL;
             }
 
+          pthread_mutex_lock (&ovl_node_global_lock);
           child = hash_lookup (n->children, &key);
           if (child)
             {
               if (!child->loaded)
                 child->layer = it;  // adjust layer
               child->loaded = 1;
+              pthread_mutex_unlock (&ovl_node_global_lock);
               continue;
             }
-
           sprintf (node_path, "%s/%s", n->path, dent->d_name);
+          pthread_mutex_unlock (&ovl_node_global_lock);
 
           bool dirp = ((st.st_mode & S_IFMT) == S_IFDIR);
 
@@ -681,12 +741,13 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
 
           if (insert_node (n, child, false) == NULL)
             {
+              node_free (child);
               errno = ENOMEM;
               closedir (dp);
               return NULL;
             }
 
-          child->loaded = 1;
+          // child->loaded set by insert_node w/ mutex locked
         }
       closedir (dp);
 
@@ -694,6 +755,7 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
         break;
     }
 
+  pthread_mutex_lock (&ovl_node_global_lock);
   for (nit = hash_get_first (n->children); nit; nit = next)
     {
       next = hash_get_next (n->children, nit);
@@ -704,7 +766,7 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
           hash_delete(n->children, nit);
         }
     }
-
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   return n;
 }
@@ -798,17 +860,25 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
   struct ovl_node key;
   struct ovl_node *node, *pnode;
 
+  pthread_mutex_lock (&ovl_node_global_lock);
+
   if (parent == FUSE_ROOT_ID)
     pnode = lo->root;
   else
     pnode = (struct ovl_node *) parent;
 
   if (name == NULL)
-    return pnode;
-
+    {
+      atomic_inc(&pnode->lookups);
+      pthread_mutex_unlock (&ovl_node_global_lock);
+      return pnode;
+    }
 
   key.name = (char *) name;
   node = hash_lookup (pnode->children, &key);
+  if (node)
+    atomic_inc(&node->lookups);
+  pthread_mutex_unlock (&ovl_node_global_lock);
   if (node == NULL)
     {
       int ret;
@@ -829,7 +899,12 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
                 continue;
 
               if (node)
-                node_free (node);
+                {
+                  pthread_mutex_lock (&ovl_node_global_lock);
+                  atomic_dec(&node->lookups);
+                  node_free (node);
+                  pthread_mutex_unlock (&ovl_node_global_lock);
+                }
 
               errno = saved_errno;
               return NULL;
@@ -895,12 +970,11 @@ ovl_lookup (fuse_req_t req, fuse_ino_t parent, const char *name)
   if (err)
     {
       fuse_reply_err (req, errno);
+      atomic_dec(&node->lookups);
       goto exit;
     }
 
   e.ino = NODE_TO_INODE (node);
-  node->lookups++;
-  debug_print ("ovl_lookup: inc node->lookups=%d\n", node->lookups);
   e.attr_timeout = ATTR_TIMEOUT;
   e.entry_timeout = ENTRY_TIMEOUT;
   fuse_reply_entry (req, &e);
@@ -960,7 +1034,9 @@ ovl_opendir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
     goto out_errno;
 
   d->offset = 0;
+  pthread_mutex_lock (&ovl_node_global_lock);
   d->tbl_size = hash_get_n_entries (node->children) + 2;
+  pthread_mutex_unlock (&ovl_node_global_lock);
   d->tbl = malloc (sizeof (struct ovl_node *) * d->tbl_size);
   if (d->tbl == NULL)
     {
@@ -971,12 +1047,15 @@ ovl_opendir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   d->tbl[counter++] = node;
   d->tbl[counter++] = node->parent;
 
+  pthread_mutex_lock (&ovl_node_global_lock);
   for (it = hash_get_first (node->children); it; it = hash_get_next (node->children, it))
     {
-      it->lookups++;
-      debug_print ("opendir: inc lookups child %s lookups=%d\n", it->name, it->lookups);
+      atomic_inc(&it->lookups);
+      debug_print ("opendir: inc lookups child %s lookups=%d\n", it->name,
+                   atomic_read(&it->lookups));
       d->tbl[counter++] = it;
     }
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   fi->fh = (uintptr_t) d;
 
@@ -1056,8 +1135,8 @@ ovl_do_readdir (fuse_req_t req, fuse_ino_t ino, size_t size,
                 /* First two entries are . and .. */
                 if (offset >= 2)
                   {
-                  node->lookups++;
-                  debug_print ("ovl_do_readdir: inc lookups=%d\n", node->lookups);
+                    atomic_inc(&node->lookups);
+                    debug_print ("ovl_do_readdir: inc lookups=%d\n", atomic_read(&node->lookups));
                   }
               }
           }
@@ -1104,11 +1183,13 @@ ovl_releasedir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 
   debug_print ("ovl_releasedir(ino=%" PRIu64 ")\n", ino);
 
+  pthread_mutex_lock (&ovl_node_global_lock);
   for (s = 2; s < d->tbl_size; s++)
     {
       struct ovl_node *n = d->tbl[s];
       do_forget (NODE_TO_INODE (n), 1);
     }
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   //do_forget (ino, 1);
 
@@ -1613,7 +1694,10 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
 
  success:
   ret = 0;
+
+  pthread_mutex_lock (&ovl_node_global_lock);
   node->layer = get_upper_layer (lo);
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   verb_print ("copyup=success uid=%u st_uid=%u written=%"PRIu64" path=%s\n",
               FUSE_GETCURRENTUID(), st.st_uid, total_written, node->path);
@@ -1695,30 +1779,21 @@ get_node_up (struct ovl_data *lo, struct ovl_node *node)
 }
 
 static size_t
-count_dir_entries (struct ovl_node *node, size_t *whiteouts)
+count_dir_entries (struct ovl_node *node)
 {
   size_t c = 0;
   struct ovl_node *it;
 
-  if (whiteouts)
-
-
+  pthread_mutex_lock (&ovl_node_global_lock);
   for (it = hash_get_first (node->children); it; it = hash_get_next (node->children, it))
     {
-#if 0
-      if (it->whiteout)
-        {
-          if (whiteouts)
-            (*whiteouts)++;
-          continue;
-        }
-#endif
       if (strcmp (it->name, ".") == 0)
         continue;
       if (strcmp (it->name, "..") == 0)
         continue;
       c++;
     }
+  pthread_mutex_unlock (&ovl_node_global_lock);
   return c;
 }
 
@@ -1730,13 +1805,14 @@ update_paths (struct ovl_node *node)
   if (node == NULL)
     return 0;
 
+  pthread_mutex_lock (&ovl_node_global_lock);
   if (node->parent)
     {
       free (node->path);
       if (asprintf (&node->path, "%s/%s", node->parent->path, node->name) < 0)
         {
           node->path = NULL;
-          return -1;
+          goto error;
         }
     }
 
@@ -1745,11 +1821,14 @@ update_paths (struct ovl_node *node)
       for (it = hash_get_first (node->children); it; it = hash_get_next (node->children, it))
         {
           if (update_paths (it) < 0)
-            return -1;
+            goto error;
         }
     }
-
+  pthread_mutex_unlock (&ovl_node_global_lock);
   return 0;
+error:
+  pthread_mutex_unlock (&ovl_node_global_lock);
+  return -1;
 }
 
 static int
@@ -1776,7 +1855,7 @@ do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
       if (node == NULL)
           return errno;
 
-      c = count_dir_entries (node, NULL);
+      c = count_dir_entries (node);
       if (c)
         return ENOTEMPTY;
     }
@@ -1829,9 +1908,11 @@ do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
     return ENOENT;
 
   key.name = (char *) name;
+  pthread_mutex_lock (&ovl_node_global_lock);
   rm = hash_delete (pnode->children, &key);
   if (rm)
       node_free (rm);
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   return ret;
 }
@@ -2154,8 +2235,6 @@ ovl_create (fuse_req_t req, fuse_ino_t parent, const char *name,
     }
   fi->fh = fd;
 
-  node->lookups++;
-  debug_print ("ovl_create: inc lookups=%d\n", node->lookups);
   fuse_reply_create (req, &e, fi);
   FUSE_EXIT();
 }
@@ -2414,7 +2493,9 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
 
   debug_print ("ovl_link node path=%s layer=%s\n", node->path, node->layer->path);
 
+  pthread_mutex_lock (&ovl_node_global_lock);
   layer = node->layer;
+  pthread_mutex_unlock (&ovl_node_global_lock);
   //pnode = node->parent;
 
 #if 0
@@ -2497,12 +2578,11 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
   ret = rpl_stat (req, node, &e.attr);
   if (ret)
     {
+      atomic_dec(&node->lookups);
       goto error;
     }
 
   e.ino = NODE_TO_INODE (node);
-  node->lookups++;
-  debug_print ("ovl_link: inc lookups=%d\n", node->lookups);
   e.attr_timeout = ATTR_TIMEOUT;
   e.entry_timeout = ENTRY_TIMEOUT;
   fuse_reply_entry (req, &e);
@@ -2594,13 +2674,12 @@ ovl_symlink (fuse_req_t req, const char *link, fuse_ino_t parent, const char *na
   ret = rpl_stat (req, node, &e.attr);
   if (ret)
     {
+      atomic_dec(&node->lookups);
       fuse_reply_err (req, errno);
       goto exit;
     }
 
   e.ino = NODE_TO_INODE (node);
-  node->lookups++;
-  debug_print ("ovl_symlink: inc lookups=%d\n", node->lookups);
   e.attr_timeout = ATTR_TIMEOUT;
   e.entry_timeout = ENTRY_TIMEOUT;
   fuse_reply_entry (req, &e);
@@ -2737,7 +2816,9 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
   destfd = ret;
 
   key.name = (char *) newname;
+  pthread_mutex_lock (&ovl_node_global_lock);
   destnode = hash_lookup (destpnode->children, &key);
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   if (flags & RENAME_NOREPLACE && destnode)
     {
@@ -2766,7 +2847,9 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
         goto error;
       }
 
+  pthread_mutex_lock (&ovl_node_global_lock);
   hash_delete (pnode->children, node);
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   free (node->name);
   node->name = strdup (newname);
@@ -2951,6 +3034,7 @@ ovl_mknod (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev
   ret = rpl_stat (req, node, &e.attr);
   if (ret)
     {
+      atomic_dec(&node->lookups);
       fuse_reply_err (req, errno);
       goto exit;
     }
@@ -2958,8 +3042,6 @@ ovl_mknod (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev
   e.ino = NODE_TO_INODE (node);
   e.attr_timeout = ATTR_TIMEOUT;
   e.entry_timeout = ENTRY_TIMEOUT;
-  node->lookups++;
-  debug_print ("ovl_mknod: inc lookups=%d\n", node->lookups);
   fuse_reply_entry (req, &e);
 exit:
   FUSE_EXIT();
@@ -3036,6 +3118,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   ret = rpl_stat (req, node, &e.attr);
   if (ret)
     {
+      atomic_dec(&node->lookups);
       fuse_reply_err (req, errno);
       FUSE_EXIT();
       return;
@@ -3044,8 +3127,6 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   e.ino = NODE_TO_INODE (node);
   e.attr_timeout = ATTR_TIMEOUT;
   e.entry_timeout = ENTRY_TIMEOUT;
-  node->lookups++;
-  debug_print ("ovl_mkdir: inc lookups=%d\n", node->lookups);
   fuse_reply_entry (req, &e);
   FUSE_EXIT();
 }
@@ -3244,12 +3325,13 @@ main (int argc, char *argv[])
                         .mountpoint = NULL,
   };
   int ret = -1;
+  struct fuse_loop_config fusecfg = { .clone_fd = MIGRATEFS_MT_CLONE_FD,
+                                      .max_idle_threads = MIGRATEFS_MT_MAX_IDLE_THREADS };
   struct fuse_args args = FUSE_ARGS_INIT (argc, newargv);
 
+  pthread_mutex_init (&ovl_node_global_lock, NULL);
+
   ngroups = sysconf(_SC_NGROUPS_MAX);
-  suppl_gids = malloc(sizeof(*suppl_gids) * ngroups);
-  if (suppl_gids == NULL)
-    error (EXIT_FAILURE, ENOMEM, "cannot allocate memory");
 
   memset (&opts, 0, sizeof (opts));
   if (fuse_opt_parse (&args, &lo, ovl_opts, fuse_opt_proc) == -1)
@@ -3308,7 +3390,7 @@ main (int argc, char *argv[])
   lo.root = load_dir (&lo, NULL, get_upper_layer (&lo), ".", "");
   if (lo.root == NULL)
     error (EXIT_FAILURE, errno, "cannot read upper dir");
-  lo.root->lookups = 2;
+  atomic_set(&lo.root->lookups, 2);
 
   se = fuse_session_new (&args, &ovl_oper, sizeof (ovl_oper), &lo);
   lo.se = se;
@@ -3328,7 +3410,9 @@ main (int argc, char *argv[])
       goto err_out3;
     }
   fuse_daemonize (opts.foreground);
-  ret = fuse_session_loop (se);
+
+  ret = fuse_session_loop_mt (se, &fusecfg);
+
   fuse_session_unmount (se);
 err_out3:
   fuse_remove_signal_handlers (se);
@@ -3341,7 +3425,6 @@ err_out1:
   node_free (lo.root);
 
   free_layers (lo.layers);
-  free(suppl_gids);
   fuse_opt_free_args (&args);
 
   return ret ? 1 : 0;
