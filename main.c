@@ -1222,6 +1222,8 @@ ovl_access (fuse_req_t req, fuse_ino_t ino, int mask)
 
   ret = faccessat (node_dirfd (n), n->path, mask, AT_SYMLINK_NOFOLLOW);
   fuse_reply_err (req, ret < 0 ? errno : 0);
+
+  FUSE_EXIT();
 }
 
 static int
