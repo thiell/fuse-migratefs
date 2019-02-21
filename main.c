@@ -2405,7 +2405,7 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
   if (node == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      return;
+      goto exit;
     }
 
   debug_print ("ovl_link node path=%s layer=%s\n", node->path, node->layer->path);
