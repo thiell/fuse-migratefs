@@ -1,2 +1,2 @@
-OPTS=-o lowerdir=/lower,upperdir=/upper
+OPTS=-o lowerdir=/lower,upperdir=/upper,max_idle_threads=10
 MNTPT=/merged
