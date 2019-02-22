@@ -273,16 +273,16 @@ struct ovl_data
   int debug;
   char *mountpoint;
   char *lowerdir;
-  char *context;
   char *upperdir;
+  unsigned int max_idle_threads;
   struct ovl_layer *layers;
 
   struct ovl_node *root;
 };
 
 static const struct fuse_opt ovl_opts[] = {
-  {"context=%s",
-   offsetof (struct ovl_data, context), 0},
+  {"max_idle_threads=%u",
+   offsetof (struct ovl_data, max_idle_threads), 0},
   {"lowerdir=%s",
    offsetof (struct ovl_data, lowerdir), 0},
   {"upperdir=%s",
@@ -3323,10 +3323,10 @@ main (int argc, char *argv[])
                         .root = NULL,
                         .lowerdir = NULL,
                         .mountpoint = NULL,
+                        .max_idle_threads = MIGRATEFS_MT_MAX_IDLE_THREADS,
   };
   int ret = -1;
-  struct fuse_loop_config fusecfg = { .clone_fd = MIGRATEFS_MT_CLONE_FD,
-                                      .max_idle_threads = MIGRATEFS_MT_MAX_IDLE_THREADS };
+  struct fuse_loop_config fusecfg;
   struct fuse_args args = FUSE_ARGS_INIT (argc, newargv);
 
   pthread_mutex_init (&ovl_node_global_lock, NULL);
@@ -3356,6 +3356,8 @@ main (int argc, char *argv[])
       exit (EXIT_SUCCESS);
     }
 
+  fusecfg.clone_fd = MIGRATEFS_MT_CLONE_FD;
+  fusecfg.max_idle_threads = lo.max_idle_threads;
   lo.debug = opts.debug;
 
   if (lo.upperdir == NULL)
@@ -3377,6 +3379,7 @@ main (int argc, char *argv[])
 
   printf ("UPPERDIR=%s\n", lo.upperdir);
   printf ("LOWERDIR=%s\n", lo.lowerdir);
+  printf ("MAX_IDLE_THREADS=%u\n", lo.max_idle_threads);
   printf ("MOUNTPOINT=%s\n", lo.mountpoint);
 
   lo.layers = read_dirs (lo.lowerdir, true, NULL);
