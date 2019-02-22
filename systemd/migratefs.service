@@ -5,6 +5,7 @@ Description=migratefs overlay FUSE mount service
 EnvironmentFile=-/etc/sysconfig/migratefs
 ExecStart=/usr/bin/migratefs -f $OPTS $MNTPT
 ExecStop=/usr/bin/umount $MNTPT
+OOMScoreAdjust=-1000
 
 [Install]
 WantedBy=local-fs.target
