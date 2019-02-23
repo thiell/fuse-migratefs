@@ -18,6 +18,9 @@ addons:
     - libacl1-dev
     - libtest-most-perl
 notifications:
+  email:
+    on_success: never
+    on_failure: always
   slack:
     secure: YxTODwJMNPymwu4Vm0GqYC3QKXnZLjUb5HUdp2mxTsJCmuwR7fVj8gFU/vRP21Kdx/EJqnDnnGCatbmTWwawt3LYjoYqgZO/+zvaXY3xqEj7y/fZ34/0s37nY1RE/nXPBTE30SvAuyDfvqhyjKUBOymZik67Hp0k/BzpCdaeXOm3gzHhBMuiNBx+q3POC4EB+9cf4t3VjCrJIz+1UxzwIvzYPEC2cWN9xTV+B5qIsT4AlN+qMzNr37ECRJUhyaj0BMCsrKQA/E6QdzQJeCFIG+5a0Pqvm2skUZHEiNKjj0aqhGji3kOTAhNMul/247nEb4HWlRSzlBqlc7mVtBXA8hIToKBBH0tpMJI7gouMtNPAML1zd/Y3DSq6xUu7vsUNAiDYB32/VL0QMTVLzNFCKtuNp0FzP0m8s69RV1jZfHlfpcPgQOjb8LLpWpgDef+8+qoddrftEUFLDlLZ/1g5fm147wmPJTNbwI1bbbN4qWyDKkGekgdSTr70XD5dIq2THL6bzcW7CnXOcVcPRv43SC2GKTZv2Kgwt/KzfaOnXMn2JIWxRGodeL4yhbXHQHhGtbbOUhHER6L0ZRZtIu2iqNF/GogKHaBBs2tliLKGtceGFnv3Ikyisy8YeHPr12yMN4QjpQi5bRZstGXoJ2Z/5s73vSIBkIObShqdkDQ0Z6E=
 before_install:
