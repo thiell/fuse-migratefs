@@ -150,7 +150,7 @@ static void FUSE_ENTER(fuse_req_t req)
     }
   else
     {
-      ret = syscall(SYS_setgroups, 1, suppl_gids);
+      ret = syscall(SYS_setgroups, ret, suppl_gids);
       if (ret < 0)
         {
           debug_print ("setgroups failed with errno=%d\n", errno);
