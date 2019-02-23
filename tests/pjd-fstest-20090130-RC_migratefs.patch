@@ -1,0 +1,39 @@
+diff -urp pjd-fstest-20090130-RC.orig/tests/chown/00.t pjd-fstest-20090130-RC/tests/chown/00.t
+--- pjd-fstest-20090130-RC.orig/tests/chown/00.t	2019-02-23 10:46:16.746690587 -0800
++++ pjd-fstest-20090130-RC/tests/chown/00.t	2019-02-23 10:48:35.640763160 -0800
+@@ -284,7 +284,7 @@ expect 0 -- chown ${n0} -1 -1
+ ctime2=`${fstest} stat ${n0} ctime`
+ case "${os}:${fs}" in
+ Linux:ext3)
+-	test_check $ctime1 -lt $ctime2
++	test_check $ctime1 -eq $ctime2
+         ;;
+ *)
+ 	test_check $ctime1 -eq $ctime2
+@@ -299,7 +299,7 @@ expect 0 -- chown ${n0} -1 -1
+ ctime2=`${fstest} stat ${n0} ctime`
+ case "${os}:${fs}" in
+ Linux:ext3)
+-	test_check $ctime1 -lt $ctime2
++	test_check $ctime1 -eq $ctime2
+         ;;
+ *)
+ 	test_check $ctime1 -eq $ctime2
+@@ -314,7 +314,7 @@ expect 0 -- chown ${n0} -1 -1
+ ctime2=`${fstest} stat ${n0} ctime`
+ case "${os}:${fs}" in
+ Linux:ext3)
+-	test_check $ctime1 -lt $ctime2
++	test_check $ctime1 -eq $ctime2
+         ;;
+ *)
+ 	test_check $ctime1 -eq $ctime2
+@@ -329,7 +329,7 @@ expect 0 -- lchown ${n0} -1 -1
+ ctime2=`${fstest} lstat ${n0} ctime`
+ case "${os}:${fs}" in
+ Linux:ext3)
+-	test_check $ctime1 -lt $ctime2
++	test_check $ctime1 -eq $ctime2
+         ;;
+ *)
+ 	test_check $ctime1 -eq $ctime2
