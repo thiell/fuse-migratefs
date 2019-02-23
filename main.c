@@ -2015,6 +2015,8 @@ ovl_do_open (fuse_req_t req, fuse_ino_t parent, const char *name, int flags, mod
 
       debug_print ("ovl_do_open %s creating %s on upper layer mode=0%o ctx->umask=0%o\n", name,
                    path, mode, ctx->umask);
+
+      // NOTE: default ACLs are not enforced when umask is set
       fd = TEMP_FAILURE_RETRY (openat (get_upper_layer (lo)->fd, path, flags, mode & ~ctx->umask));
       if (fd < 0) {
         debug_print ("ovl_do_open openat failed with errno %d\n", errno);

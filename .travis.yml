@@ -1,6 +1,6 @@
 language: c
 sudo: required
-dist: trusty
+dist: xenial
 addons:
   apt:
     packages:
@@ -12,19 +12,22 @@ addons:
       - pkg-config
       - wget
       - xz-utils
-      - python3.5
+      - python3
       - g++
       - python3-setuptools
+      - libacl1-dev
+      - libtest-most-perl
 before_install:
-  - sudo mkdir -p /lower /upper /mnt
-  - (cd /; sudo git clone https://github.com/amir73il/unionmount-testsuite.git)
-  - (git clone git://github.com/ninja-build/ninja.git && cd ninja && python3.5 ./bootstrap.py && sudo cp ninja /usr/bin)
-  - (git clone https://github.com/mesonbuild/meson.git; cd meson; sudo python3.5 ./setup.py install)
-  - (wget https://github.com/libfuse/libfuse/releases/download/fuse-3.2.4/fuse-3.2.4.tar.xz; tar xf fuse-3.2.4.tar.xz; cd fuse-3.2.4; mkdir build; cd build; meson .. --prefix /usr && ninja && sudo ninja install)
+  - sudo mkdir -p /lower /upper /merged
+  - (wget http://download.tuxera.com/sw/qa/pjd-fstest-20090130-RC.tgz; tar xf pjd-fstest-20090130-RC.tgz; cd pjd-fstest-20090130-RC; gcc -Wall -DHAS_ACL fstest.c -o fstest -lacl; patch -p1 <$TRAVIS_BUILD_DIR/tests/pjd-fstest-20090130-RC_migratefs.patch)
+  - (git clone git://github.com/ninja-build/ninja.git && cd ninja && python3 ./bootstrap.py && sudo cp ninja /usr/bin)
+  - (git clone https://github.com/mesonbuild/meson.git; cd meson; sudo python3 ./setup.py install)
+  - (wget https://github.com/libfuse/libfuse/releases/download/fuse-3.2.6/fuse-3.2.6.tar.xz; tar xf fuse-3.2.6.tar.xz; cd fuse-3.2.6; mkdir build; cd build; meson .. --prefix /usr && ninja && sudo ninja install)
 script:
   - ./autogen.sh
   - ./configure
   - make -j $(nproc)
-  - sudo make -j install; sudo cp fuse-overlayfs /sbin
-  - (cd /unionmount-testsuite; sudo ./run --ov --fuse=fuse-overlayfs --xdev)
-  - (cd /unionmount-testsuite; FUSE_OVERLAYFS_DISABLE_OVL_WHITEOUT=1 sudo -E ./run --ov --fuse=fuse-overlayfs --xdev)
+  - sudo make -j install
+  - sudo /usr/local/bin/migratefs -o lowerdir=/lower,upperdir=/upper /merged
+  - sudo mkdir /merged/fstest && sudo chown $USER /merged/fstest
+  - (cd /merged/fstest; sudo prove -r $TRAVIS_BUILD_DIR/pjd-fstest-20090130-RC)
