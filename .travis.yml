@@ -4,30 +4,39 @@ dist: xenial
 addons:
   apt:
     packages:
-      - automake
-      - autotools-dev
-      - git
-      - make
-      - gcc
-      - pkg-config
-      - wget
-      - xz-utils
-      - python3
-      - g++
-      - python3-setuptools
-      - libacl1-dev
-      - libtest-most-perl
+    - automake
+    - autotools-dev
+    - git
+    - make
+    - gcc
+    - pkg-config
+    - wget
+    - xz-utils
+    - python3
+    - g++
+    - python3-setuptools
+    - libacl1-dev
+    - libtest-most-perl
+notifications:
+  slack:
+    secure: YxTODwJMNPymwu4Vm0GqYC3QKXnZLjUb5HUdp2mxTsJCmuwR7fVj8gFU/vRP21Kdx/EJqnDnnGCatbmTWwawt3LYjoYqgZO/+zvaXY3xqEj7y/fZ34/0s37nY1RE/nXPBTE30SvAuyDfvqhyjKUBOymZik67Hp0k/BzpCdaeXOm3gzHhBMuiNBx+q3POC4EB+9cf4t3VjCrJIz+1UxzwIvzYPEC2cWN9xTV+B5qIsT4AlN+qMzNr37ECRJUhyaj0BMCsrKQA/E6QdzQJeCFIG+5a0Pqvm2skUZHEiNKjj0aqhGji3kOTAhNMul/247nEb4HWlRSzlBqlc7mVtBXA8hIToKBBH0tpMJI7gouMtNPAML1zd/Y3DSq6xUu7vsUNAiDYB32/VL0QMTVLzNFCKtuNp0FzP0m8s69RV1jZfHlfpcPgQOjb8LLpWpgDef+8+qoddrftEUFLDlLZ/1g5fm147wmPJTNbwI1bbbN4qWyDKkGekgdSTr70XD5dIq2THL6bzcW7CnXOcVcPRv43SC2GKTZv2Kgwt/KzfaOnXMn2JIWxRGodeL4yhbXHQHhGtbbOUhHER6L0ZRZtIu2iqNF/GogKHaBBs2tliLKGtceGFnv3Ikyisy8YeHPr12yMN4QjpQi5bRZstGXoJ2Z/5s73vSIBkIObShqdkDQ0Z6E=
 before_install:
-  - sudo mkdir -p /lower /upper /merged
-  - (wget http://download.tuxera.com/sw/qa/pjd-fstest-20090130-RC.tgz; tar xf pjd-fstest-20090130-RC.tgz; cd pjd-fstest-20090130-RC; gcc -Wall -DHAS_ACL fstest.c -o fstest -lacl; patch -p1 <$TRAVIS_BUILD_DIR/tests/pjd-fstest-20090130-RC_migratefs.patch)
-  - (git clone git://github.com/ninja-build/ninja.git && cd ninja && python3 ./bootstrap.py && sudo cp ninja /usr/bin)
-  - (git clone https://github.com/mesonbuild/meson.git; cd meson; sudo python3 ./setup.py install)
-  - (wget https://github.com/libfuse/libfuse/releases/download/fuse-3.2.6/fuse-3.2.6.tar.xz; tar xf fuse-3.2.6.tar.xz; cd fuse-3.2.6; mkdir build; cd build; meson .. --prefix /usr && ninja && sudo ninja install)
+- sudo mkdir -p /lower /upper /merged
+- (wget http://download.tuxera.com/sw/qa/pjd-fstest-20090130-RC.tgz; tar xf pjd-fstest-20090130-RC.tgz;
+  cd pjd-fstest-20090130-RC; gcc -Wall -DHAS_ACL fstest.c -o fstest -lacl; patch -p1
+  <$TRAVIS_BUILD_DIR/tests/pjd-fstest-20090130-RC_migratefs.patch)
+- (git clone git://github.com/ninja-build/ninja.git && cd ninja && python3 ./bootstrap.py
+  && sudo cp ninja /usr/bin)
+- (git clone https://github.com/mesonbuild/meson.git; cd meson; sudo python3 ./setup.py
+  install)
+- (wget https://github.com/libfuse/libfuse/releases/download/fuse-3.2.6/fuse-3.2.6.tar.xz;
+  tar xf fuse-3.2.6.tar.xz; cd fuse-3.2.6; mkdir build; cd build; meson .. --prefix
+  /usr && ninja && sudo ninja install)
 script:
-  - ./autogen.sh
-  - ./configure
-  - make -j $(nproc)
-  - sudo make -j install
-  - sudo /usr/local/bin/migratefs -o lowerdir=/lower,upperdir=/upper /merged
-  - sudo mkdir /merged/fstest && sudo chown $USER /merged/fstest
-  - (cd /merged/fstest; sudo prove -r $TRAVIS_BUILD_DIR/pjd-fstest-20090130-RC)
+- ./autogen.sh
+- ./configure
+- make -j $(nproc)
+- sudo make -j install
+- sudo /usr/local/bin/migratefs -o lowerdir=/lower,upperdir=/upper /merged
+- sudo mkdir /merged/fstest && sudo chown $USER /merged/fstest
+- (cd /merged/fstest; sudo prove -r $TRAVIS_BUILD_DIR/pjd-fstest-20090130-RC)
