@@ -202,7 +202,7 @@ static uid_t FUSE_GETCURRENTUID()
 
 static void FUSE_ENTER_ROOTPRIV()
 {
-  if (setresuid(-1, 0, -1) < 0)
+  if (syscall(SYS_setresuid, -1, 0, -1) < 0)
     verb_print ("FUSE_ENTER_ROOTPRIV: setresuid failed with errno=%d\n", errno);
 }
 
@@ -210,7 +210,7 @@ static void FUSE_EXIT_ROOTPRIV()
 {
   uid_t saved_ctx_uid = FUSE_GETCURRENTUID();
 
-  if (setresuid(-1, saved_ctx_uid, -1) < 0)
+  if (syscall(SYS_setresuid, -1, saved_ctx_uid, -1) < 0)
     verb_print ("FUSE_EXIT_ROOTPRIV: setresuid uid=%u failed with errno=%d\n",
                 saved_ctx_uid, errno);
 }
