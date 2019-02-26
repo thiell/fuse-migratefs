@@ -264,6 +264,7 @@ struct ovl_node
   char *name;
   atomic_t lookups;
   ino_t ino;
+  pthread_mutex_t dirlock;
   unsigned int loaded : 1;
 };
 
@@ -452,6 +453,8 @@ node_free (void *p)
 
       hash_free (n->children);
       n->children = NULL;
+
+      pthread_mutex_destroy (&n->dirlock);
     }
 
   free (n->name);
@@ -523,6 +526,8 @@ make_ovl_node (const char *path, struct ovl_layer *layer, const char *name, ino_
   ret->last_layer = NULL;
   ret->parent = parent;
   atomic_set(&ret->lookups, 0);
+  if (dir_p)
+    pthread_mutex_init (&ret->dirlock, NULL);
   ret->layer = layer;
   ret->ino = ino;
   ret->name = strdup (name);
@@ -1002,13 +1007,14 @@ ovl_opendir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 {
   FUSE_ENTER(req);
 
-  debug_print ("ovl_opendir %llu\n", ino);
+  debug_print ("ovl_opendir(ino=%" PRIu64 ")\n", ino);
 
   size_t counter = 0;
   struct ovl_node *node;
   struct ovl_data *lo = ovl_data (req);
   struct ovl_node *it;
   struct ovl_dirp *d = calloc (1, sizeof (struct ovl_dirp));
+  pthread_mutex_t *dirlockp;
 
   if (d == NULL)
     {
@@ -1029,7 +1035,10 @@ ovl_opendir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
       goto out_errno;
     }
 
+  dirlockp = &node->dirlock;
+  pthread_mutex_lock (dirlockp);
   node = load_dir (lo, node, node->layer, node->path, node->name);
+  pthread_mutex_unlock (dirlockp);
   if (node == NULL)
     goto out_errno;
 
@@ -1055,9 +1064,8 @@ ovl_opendir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
                    atomic_read(&it->lookups));
       d->tbl[counter++] = it;
     }
-  pthread_mutex_unlock (&ovl_node_global_lock);
-
   fi->fh = (uintptr_t) d;
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   fuse_reply_open (req, fi);
   FUSE_EXIT();
