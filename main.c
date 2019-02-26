@@ -739,16 +739,16 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
           child = make_ovl_node (node_path, it, dent->d_name, 0, dirp, n);
           if (child == NULL)
             {
-              errno = ENOMEM;
               closedir (dp);
+              errno = ENOMEM;
               return NULL;
             }
 
           if (insert_node (n, child, false) == NULL)
             {
               node_free (child);
-              errno = ENOMEM;
               closedir (dp);
+              errno = ENOMEM;
               return NULL;
             }
 
