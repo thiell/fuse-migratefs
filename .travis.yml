@@ -17,6 +17,7 @@ addons:
     - python3-setuptools
     - libacl1-dev
     - libtest-most-perl
+    - stress-ng
 notifications:
   email:
     on_success: never
@@ -44,3 +45,4 @@ script:
 - sudo mkdir /merged/fstest && sudo chown $USER /merged/fstest
 - (cd /merged/fstest; sudo prove -r $TRAVIS_BUILD_DIR/pjd-fstest-20090130-RC)
 - (cd $TRAVIS_BUILD_DIR/tests; sudo ./run.sh)
+- cd /merged/test && travis_wait sudo stress-ng --class filesystem --seq 1 -t 30s -x apparmor,fiemap,rdrand,sync-file,xattr
