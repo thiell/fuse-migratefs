@@ -16,6 +16,11 @@ Limitations:
 
 Read-only mode is not supported.
 
+Umask has precedence over Default POSIX ACLs.
+
+fgetxattr/fsetxattr (get/set extended attributes) of an unlinked file is not supported.
+
+
 Usage:
 =======================================================
 
