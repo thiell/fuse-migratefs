@@ -1817,14 +1817,13 @@ update_paths (struct ovl_node *node)
   if (node == NULL)
     return 0;
 
-  pthread_mutex_lock (&ovl_node_global_lock);
   if (node->parent)
     {
       free (node->path);
       if (asprintf (&node->path, "%s/%s", node->parent->path, node->name) < 0)
         {
           node->path = NULL;
-          goto error;
+          return -1;
         }
     }
 
@@ -1833,14 +1832,10 @@ update_paths (struct ovl_node *node)
       for (it = hash_get_first (node->children); it; it = hash_get_next (node->children, it))
         {
           if (update_paths (it) < 0)
-            goto error;
+            return -1;
         }
     }
-  pthread_mutex_unlock (&ovl_node_global_lock);
   return 0;
-error:
-  pthread_mutex_unlock (&ovl_node_global_lock);
-  return -1;
 }
 
 static int
@@ -2873,7 +2868,11 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
   node = insert_node (destpnode, node, true);
   if (node == NULL)
     goto error;
-  if (update_paths (node) < 0)
+
+  pthread_mutex_lock (&ovl_node_global_lock);
+  ret = update_paths (node);
+  pthread_mutex_unlock (&ovl_node_global_lock);
+  if (ret < 0)
     goto error;
 
   ret = 0;
