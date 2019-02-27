@@ -1044,10 +1044,10 @@ ovl_opendir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   d->offset = 0;
   pthread_mutex_lock (&ovl_node_global_lock);
   d->tbl_size = hash_get_n_entries (node->children) + 2;
-  pthread_mutex_unlock (&ovl_node_global_lock);
   d->tbl = malloc (sizeof (struct ovl_node *) * d->tbl_size);
   if (d->tbl == NULL)
     {
+      pthread_mutex_unlock (&ovl_node_global_lock);
       errno = ENOMEM;
       goto out_errno;
     }
@@ -1055,7 +1055,6 @@ ovl_opendir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   d->tbl[counter++] = node;
   d->tbl[counter++] = node->parent;
 
-  pthread_mutex_lock (&ovl_node_global_lock);
   for (it = hash_get_first (node->children); it; it = hash_get_next (node->children, it))
     {
       // increase inode lookup count that will be be decreased by releasedir()
@@ -1170,7 +1169,12 @@ ovl_readdir (fuse_req_t req, fuse_ino_t ino, size_t size,
 {
   FUSE_ENTER(req);
 
+  struct ovl_dirp *d = ovl_dirp (fi);
+  pthread_mutex_t *dirlockp = &d->tbl[0]->dirlock;
+
+  pthread_mutex_lock (dirlockp);
   ovl_do_readdir (req, ino, size, offset, fi, 0);
+  pthread_mutex_unlock (dirlockp);
 
   FUSE_EXIT();
 }
@@ -1181,7 +1185,12 @@ ovl_readdirplus (fuse_req_t req, fuse_ino_t ino, size_t size,
 {
   FUSE_ENTER(req);
 
+  struct ovl_dirp *d = ovl_dirp (fi);
+  pthread_mutex_t *dirlockp = &d->tbl[0]->dirlock;
+
+  pthread_mutex_lock (dirlockp);
   ovl_do_readdir (req, ino, size, offset, fi, 1);
+  pthread_mutex_unlock (dirlockp);
 
   FUSE_EXIT();
 }
@@ -1846,6 +1855,8 @@ do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
   struct ovl_node *pnode;
   int ret = 0;
   struct ovl_node key, *rm;
+  int saved_errno;
+  pthread_mutex_t *dirlockp;
 
   node = do_lookup_file (lo, parent, name);
   if (node == NULL)
@@ -1858,11 +1869,18 @@ do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
       size_t c;
 
       /* Re-load the directory.  */
+      dirlockp = &node->dirlock;
+      pthread_mutex_lock (dirlockp);
       node = load_dir (lo, node, node->layer, node->path, node->name);
       if (node == NULL)
-          return errno;
+        {
+          saved_errno = errno;
+          pthread_mutex_unlock (dirlockp);
+          return saved_errno;
+        }
 
       c = count_dir_entries (node);
+      pthread_mutex_unlock (dirlockp);
       if (c)
         return ENOTEMPTY;
     }
@@ -2763,8 +2781,13 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
 
   if (node_dirp (node))
     {
+      pthread_mutex_t *dirlockp;
+
       debug_print ("ovl_rename_direct %s is directory\n", name);
+      dirlockp = &node->dirlock;
+      pthread_mutex_lock (dirlockp);
       node = load_dir (lo, node, node->layer, node->path, node->name);
+      pthread_mutex_unlock (dirlockp);
       if (node == NULL)
         {
           debug_print ("ovl_rename_direct load_dir failed errno=%d\n", errno);
