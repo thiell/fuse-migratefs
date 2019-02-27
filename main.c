@@ -238,7 +238,7 @@ static inline void atomic_dec( atomic_t *v )
     (void)__sync_fetch_and_sub(&v->counter, 1);
 }
 
-// Atomically adds @i to @v and returns true
+// Atomically decrements @i by @v and returns true
 // if the result is negative or zero, or false
 // when result is greater than zero.
 static inline int atomic_sub_ne( int i, atomic_t *v )
@@ -441,6 +441,9 @@ node_free (void *p)
       n->parent = NULL;
     }
 
+  debug_print ("do_forget: calling node_free lookups=%d path=%s name=%s\n",
+               atomic_read(&n->lookups), n->path, n->name);
+
   if (atomic_read(&n->lookups) > 0)
       return;
 
@@ -475,7 +478,7 @@ do_forget (fuse_ino_t ino, uint64_t nlookup)
   n = (struct ovl_node *) ino;
 
   debug_print ("do_forget: path=%s name=%s lookups=%d nlookup=%d\n",
-            n->path, n->name, atomic_read(&n->lookups), nlookup);
+               n->path, n->name, atomic_read(&n->lookups), nlookup);
 
   if (atomic_sub_ne(nlookup, &n->lookups))
     {
@@ -631,7 +634,6 @@ insert_node (struct ovl_node *parent, struct ovl_node *item, bool replace)
 
   item->parent = parent;
   item->loaded = 1;                 // for load_dir()
-  atomic_inc(&item->lookups);
   pthread_mutex_unlock (&ovl_node_global_lock);
 
   return item;
@@ -874,15 +876,12 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
 
   if (name == NULL)
     {
-      atomic_inc(&pnode->lookups);
       pthread_mutex_unlock (&ovl_node_global_lock);
       return pnode;
     }
 
   key.name = (char *) name;
   node = hash_lookup (pnode->children, &key);
-  if (node)
-    atomic_inc(&node->lookups);
   pthread_mutex_unlock (&ovl_node_global_lock);
   if (node == NULL)
     {
@@ -906,7 +905,6 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
               if (node)
                 {
                   pthread_mutex_lock (&ovl_node_global_lock);
-                  atomic_dec(&node->lookups);
                   node_free (node);
                   pthread_mutex_unlock (&ovl_node_global_lock);
                 }
@@ -975,13 +973,14 @@ ovl_lookup (fuse_req_t req, fuse_ino_t parent, const char *name)
   if (err)
     {
       fuse_reply_err (req, errno);
-      atomic_dec(&node->lookups);
       goto exit;
     }
 
   e.ino = NODE_TO_INODE (node);
   e.attr_timeout = ATTR_TIMEOUT;
   e.entry_timeout = ENTRY_TIMEOUT;
+  debug_print ("ovl_lookup: inc lookups=%d path=%s\n", atomic_read(&node->lookups), node->path);
+  atomic_inc(&node->lookups);
   fuse_reply_entry (req, &e);
 
 exit:
@@ -1059,6 +1058,7 @@ ovl_opendir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   pthread_mutex_lock (&ovl_node_global_lock);
   for (it = hash_get_first (node->children); it; it = hash_get_next (node->children, it))
     {
+      // increase inode lookup count that will be be decreased by releasedir()
       atomic_inc(&it->lookups);
       debug_print ("opendir: inc lookups child %s lookups=%d\n", it->name,
                    atomic_read(&it->lookups));
@@ -1113,8 +1113,8 @@ ovl_do_readdir (fuse_req_t req, fuse_ino_t ino, size_t size,
         ret = rpl_stat (req, node, &st);
         if (ret < 0)
           {
-            verb_print ("readdir=failed call=rpl_stat errno=%d uid=%u node_path=%s\n",
-                        errno, FUSE_GETCURRENTUID(), node->path);
+            debug_print ("readdir=failed call=rpl_stat errno=%d uid=%u node_path=%s\n",
+                         errno, FUSE_GETCURRENTUID(), node->path);
             continue;
           }
 
@@ -1143,8 +1143,13 @@ ovl_do_readdir (fuse_req_t req, fuse_ino_t ino, size_t size,
                 /* First two entries are . and .. */
                 if (offset >= 2)
                   {
+                    /* In contrast to readdir() (which does not affect the lookup counts),
+                     * the lookup count of every entry returned by readdirplus(), except "."
+                     * and "..", is incremented by one.
+                     */
                     atomic_inc(&node->lookups);
-                    debug_print ("ovl_do_readdir: inc lookups=%d\n", atomic_read(&node->lookups));
+                    debug_print ("ovl_do_readdir: inc lookups=%d path=%s\n",
+                                 atomic_read(&node->lookups), name);
                   }
               }
           }
@@ -1199,7 +1204,6 @@ ovl_releasedir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
     }
   pthread_mutex_unlock (&ovl_node_global_lock);
 
-  //do_forget (ino, 1);
 
   free (d->tbl);
   free (d);
@@ -2243,6 +2247,7 @@ ovl_create (fuse_req_t req, fuse_ino_t parent, const char *name,
     }
   fi->fh = fd;
 
+  atomic_inc(&node->lookups);
   fuse_reply_create (req, &e, fi);
   FUSE_EXIT();
 }
@@ -2585,14 +2590,12 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
 
   ret = rpl_stat (req, node, &e.attr);
   if (ret)
-    {
-      atomic_dec(&node->lookups);
       goto error;
-    }
 
   e.ino = NODE_TO_INODE (node);
   e.attr_timeout = ATTR_TIMEOUT;
   e.entry_timeout = ENTRY_TIMEOUT;
+  atomic_inc(&node->lookups);
   fuse_reply_entry (req, &e);
 
   if (destfd >= 0)
@@ -2682,7 +2685,6 @@ ovl_symlink (fuse_req_t req, const char *link, fuse_ino_t parent, const char *na
   ret = rpl_stat (req, node, &e.attr);
   if (ret)
     {
-      atomic_dec(&node->lookups);
       fuse_reply_err (req, errno);
       goto exit;
     }
@@ -2690,6 +2692,7 @@ ovl_symlink (fuse_req_t req, const char *link, fuse_ino_t parent, const char *na
   e.ino = NODE_TO_INODE (node);
   e.attr_timeout = ATTR_TIMEOUT;
   e.entry_timeout = ENTRY_TIMEOUT;
+  atomic_inc(&node->lookups);
   fuse_reply_entry (req, &e);
 
 exit:
@@ -3042,7 +3045,6 @@ ovl_mknod (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev
   ret = rpl_stat (req, node, &e.attr);
   if (ret)
     {
-      atomic_dec(&node->lookups);
       fuse_reply_err (req, errno);
       goto exit;
     }
@@ -3050,6 +3052,7 @@ ovl_mknod (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev
   e.ino = NODE_TO_INODE (node);
   e.attr_timeout = ATTR_TIMEOUT;
   e.entry_timeout = ENTRY_TIMEOUT;
+  atomic_inc(&node->lookups);
   fuse_reply_entry (req, &e);
 exit:
   FUSE_EXIT();
@@ -3126,7 +3129,6 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   ret = rpl_stat (req, node, &e.attr);
   if (ret)
     {
-      atomic_dec(&node->lookups);
       fuse_reply_err (req, errno);
       FUSE_EXIT();
       return;
@@ -3135,6 +3137,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   e.ino = NODE_TO_INODE (node);
   e.attr_timeout = ATTR_TIMEOUT;
   e.entry_timeout = ENTRY_TIMEOUT;
+  atomic_inc(&node->lookups);
   fuse_reply_entry (req, &e);
   FUSE_EXIT();
 }
