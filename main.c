@@ -2295,21 +2295,37 @@ ovl_getattr (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   struct ovl_node *node;
   struct fuse_entry_param e;
 
-  debug_print ("ovl_getattr(ino=%" PRIu64 "s)\n", ino);
+  debug_print  ("ovl_getattr(ino=%" PRIu64 "s) fi=%" PRIu64 "\n", ino, fi);
 
-  node = do_lookup_file (lo, ino, NULL);
-  if (node == NULL)
+  if (fi == NULL)
     {
-      fuse_reply_err (req, ENOENT);
-      FUSE_EXIT();
-      return;
+      node = do_lookup_file (lo, ino, NULL);
+      if (node == NULL)
+        {
+          fuse_reply_err (req, ENOENT);
+          FUSE_EXIT();
+          return;
+        }
+
+      if (do_getattr (req, &e, node) < 0)
+        {
+          fuse_reply_err (req, errno);
+          FUSE_EXIT();
+          return;
+        }
     }
-
-  if (do_getattr (req, &e, node) < 0)
+  else
     {
-      fuse_reply_err (req, errno);
-      FUSE_EXIT();
-      return;
+      int fd = fi->fh;
+
+      if (TEMP_FAILURE_RETRY (fstat (fd, &e.attr)) < 0)
+        {
+          int saved_errno = errno;
+          verb_print ("getattr=failed call=fstatat fd=%d errno=%d\n", fd, saved_errno);
+          fuse_reply_err (req, saved_errno);
+          FUSE_EXIT();
+          return;
+        }
     }
 
   fuse_reply_attr (req, &e.attr, ENTRY_TIMEOUT);
