@@ -2321,7 +2321,7 @@ ovl_getattr (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
       if (TEMP_FAILURE_RETRY (fstat (fd, &e.attr)) < 0)
         {
           int saved_errno = errno;
-          verb_print ("getattr=failed call=fstatat fd=%d errno=%d\n", fd, saved_errno);
+          verb_print ("getattr=failed call=fstat fd=%d errno=%d\n", fd, saved_errno);
           fuse_reply_err (req, saved_errno);
           FUSE_EXIT();
           return;
