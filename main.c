@@ -2760,6 +2760,7 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
   int srcfd = -1;
   int destfd = -1;
   struct ovl_node key;
+  pthread_mutex_t *dirlockp = NULL;
 
   debug_print ("ovl_rename_direct path=%s name=%s newparent=%s newname=%s\n",
                 (parent==FUSE_ROOT_ID)?"ROOT":((struct ovl_node *)parent)->path,
@@ -2797,15 +2798,13 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
 
   if (node_dirp (node))
     {
-      pthread_mutex_t *dirlockp;
-
       debug_print ("ovl_rename_direct %s is directory\n", name);
       dirlockp = &node->dirlock;
       pthread_mutex_lock (dirlockp);
       node = load_dir (lo, node, node->layer, node->path, node->name);
-      pthread_mutex_unlock (dirlockp);
       if (node == NULL)
         {
+          pthread_mutex_unlock (dirlockp);
           debug_print ("ovl_rename_direct load_dir failed errno=%d\n", errno);
           fuse_reply_err (req, errno);
           return;
@@ -2921,6 +2920,8 @@ error:
   ret = -1;
 
 cleanup:
+  if (dirlockp)
+    pthread_mutex_unlock (dirlockp);
   saved_errno = errno;
   if (srcfd >= 0)
     close (srcfd);
