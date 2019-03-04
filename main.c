@@ -436,6 +436,13 @@ node_free (void *p)
 
   if (n->parent)
     {
+      if (n->parent->children == NULL)
+        {
+          // should never happen
+          verb_print ("node_free: ERROR parent->children==NULL lookups=%d path=%s name=%s\n",
+                      atomic_read(&n->lookups), n->path, n->name);
+          return;
+        }
       if (hash_lookup (n->parent->children, n) == n)
         hash_delete (n->parent->children, n);
       n->parent = NULL;
@@ -770,7 +777,7 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
         {
           debug_print ("load_dir hash_delete orphan uid=%u path=%s name=%s\n",
                        FUSE_GETCURRENTUID(), nit->path, nit->name);
-          hash_delete(n->children, nit);
+          node_free(nit);
         }
     }
   pthread_mutex_unlock (&ovl_node_global_lock);
