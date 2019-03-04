@@ -463,7 +463,6 @@ node_free (void *p)
 
       hash_free (n->children);
       n->children = NULL;
-
       pthread_mutex_destroy (&n->dirlock);
     }
 
@@ -2891,12 +2890,12 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
           goto error;
       }
     */
-    ret = TEMP_FAILURE_RETRY (renameat (srcfd, name, destfd, newname));
-    if (ret < 0)
-      {
-        debug_print ("ovl_rename_direct renameat failed errno=%d\n", errno);
-        goto error;
-      }
+  ret = TEMP_FAILURE_RETRY (renameat (srcfd, name, destfd, newname));
+  if (ret < 0)
+    {
+      debug_print ("ovl_rename_direct renameat failed errno=%d\n", errno);
+      goto error;
+    }
 
   pthread_mutex_lock (&ovl_node_global_lock);
   hash_delete (pnode->children, node);
