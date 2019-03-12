@@ -43,6 +43,7 @@
 #include <fuse.h>
 #include <fuse_lowlevel.h>
 #include <unistd.h>
+#include <execinfo.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -210,6 +211,26 @@ static void FUSE_EXIT_ROOTPRIV()
                 saved_ctx_uid, errno);
 }
 
+
+/* Obtain a backtrace and print it to stdout. */
+static void
+print_trace (void)
+{
+  void *array[10];
+  size_t size;
+  char **strings;
+  size_t i;
+
+  size = backtrace (array, 10);
+  strings = backtrace_symbols (array, size);
+
+  verb_print ("Obtained %zd stack frames.\n", size);
+
+  for (i = 0; i < size; i++)
+     verb_print ("%s\n", strings[i]);
+
+  free (strings);
+}
 
 struct ovl_layer
 {
@@ -404,6 +425,7 @@ node_free (void *p)
           // should never happen
           verb_print ("node_free: ERROR parent->children==NULL lookups=%lu path=%s name=%s\n",
                       n->lookups, n->path, n->name);
+          print_trace ();
           return;
         }
       if (hash_lookup (n->parent->children, n) == n)
@@ -463,6 +485,7 @@ do_forget (fuse_ino_t ino, uint64_t nlookup)
     {
       verb_print ("do_forget: ERROR path=%s name=%s lookups=%d nlookup=%d\n",
                    n->path, n->name, n->lookups, nlookup);
+      return;
     }
   assert (n->lookups >= nlookup);
   n->lookups -= nlookup;
@@ -787,7 +810,6 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
         {
           debug_print ("load_dir node_free orphan uid=%u path=%s name=%s\n",
                        FUSE_GETCURRENTUID(), nit->path, nit->name);
-          assert (nit->lookups > 0);
           node_free(nit);
         }
     }
@@ -1110,7 +1132,7 @@ ovl_opendir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   return;
 
 out_errno:
-  assert (errno != 0);
+  //assert (errno != 0);
   debug_print ("ovl_opendir out_errno %d\n", errno);
   if (d)
     {
@@ -1187,6 +1209,11 @@ ovl_do_readdir (fuse_req_t req, fuse_ino_t ino, size_t size,
                      * the lookup count of every entry returned by readdirplus(), except "."
                      * and "..", is incremented by one.
                      */
+                    if (!node->lookups)
+                      {
+                        verb_print ("ovl_do_readdir: ERROR node->lookups=%lu\n", node->lookups);
+                        continue;
+                      }
                     assert (node->lookups > 0);
                     ref_node (NODE_TO_INODE(node));
                     debug_print ("ovl_do_readdir: inc lookups=%d path=%s\n", node->lookups, name);
