@@ -6,7 +6,7 @@ ACLOCAL_AMFLAGS = -Im4
 
 EXTRA_DIST = m4/gnulib-cache.m4 rpm/fuse-migratefs.spec.template autogen.sh systemd/migratefs.service systemd/migratefs
 
-migratefs_CFLAGS = -I . -I lib $(FUSE_CFLAGS)
+migratefs_CFLAGS = -I . -I lib $(FUSE_CFLAGS) -rdynamic
 migratefs_LDFLAGS =
 migratefs_LDADD = lib/libgnu.a $(FUSE_LIBS)
 migratefs_SOURCES = main.c
