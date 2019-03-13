@@ -1908,6 +1908,52 @@ count_dir_entries (struct ovl_node *node)
   return c;
 }
 
+/* version of insert_node() for rename to be used along with
+ * update_paths()
+ * requires proper locking
+ */
+static struct ovl_node *
+update_node (struct ovl_node *parent, struct ovl_node *item)
+{
+  struct ovl_node *old = NULL, *prev_parent;
+  int ret;
+
+  prev_parent = item->parent;
+
+  if (prev_parent)
+    {
+      if (hash_lookup (prev_parent->children, item) == item)
+        hash_delete (prev_parent->children, item);
+    }
+
+  old = hash_delete (parent->children, item);
+  if (old)
+      node_free (old);
+
+  ret = hash_insert_if_absent (parent->children, item, (const void **) &old);
+  if (ret < 0)
+    {
+      node_free (item);
+      errno = ENOMEM;
+      return NULL;
+    }
+  if (ret == 0)
+    {
+      node_free (item);
+      if (old->parent == NULL)
+          verb_print ("update_node: ERROR (old) parent==NULL path=%s\n", old->path);
+      if (old->parent != NULL && old->parent->children == NULL)
+          verb_print ("update_node: ERROR (old) parent->children==NULL path=%s\n", old->path);
+      return old;
+    }
+
+  item->parent = parent;
+  if (item->parent && item->parent->children == NULL)
+      verb_print ("update_node: ERROR (new) parent->children==NULL path=%s\n", item->path);
+
+  return item;
+}
+
 static int
 update_paths (struct ovl_node *node)
 {
@@ -3043,26 +3089,31 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
   hash_delete (pnode->children, node);
   free (node->name);
   node->name = strdup (newname);
-  pthread_mutex_unlock (&ovl_node_global_lock);
   if (node->name == NULL)
     {
+      pthread_mutex_unlock (&ovl_node_global_lock);
       ret = -1;
+      errno = ENOMEM;
       goto error;
     }
 
-  node = insert_node (destpnode, orignode, true, false);
+  node = update_node (destpnode, orignode);
   if (node == NULL)
-    goto error;
+    {
+      pthread_mutex_unlock (&ovl_node_global_lock);
+      ret = -1;
+      errno = ENOMEM;
+      goto error;
+    }
 
-  //
-  // insert_node - update_paths race?
-  //
-
-  pthread_mutex_lock (&ovl_node_global_lock);
   ret = update_paths (node);
   pthread_mutex_unlock (&ovl_node_global_lock);
+
   if (ret < 0)
-    goto error;
+    {
+      errno = ENOMEM;
+      goto error;
+    }
 
   ret = 0;
   goto cleanup;
