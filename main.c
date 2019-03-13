@@ -426,11 +426,14 @@ node_free (void *p)
           verb_print ("node_free: ERROR parent->children==NULL lookups=%lu path=%s name=%s\n",
                       n->lookups, n->path, n->name);
           print_trace ();
-          return;
+          n->parent = NULL; // workaround
+          goto destroy;
         }
       if (hash_lookup (n->parent->children, n) == n)
         hash_delete (n->parent->children, n);
+
       n->parent = NULL;
+
       if (n->lookups > 0)
         {
           debug_print ("node_free: unlink parent but NO FREE ino=%" PRIu64 " lookups=%lu path=%s\n", n,
@@ -448,11 +451,11 @@ node_free (void *p)
 
   if (n->children)
     {
-      struct ovl_node *it;
+      struct ovl_node *it, *next;
 
-      for (it = hash_get_first (n->children); it; it = hash_get_next (n->children, it))
+      for (it = hash_get_first (n->children); it; it = next)
         {
-          //it->parent = NULL;
+          next = hash_get_next (n->children, it);
           node_free (it);
         }
 
@@ -461,6 +464,7 @@ node_free (void *p)
       pthread_mutex_destroy (&n->dirlock);
     }
 
+destroy:
   free (n->name);
   free (n->path);
   free (n);
@@ -664,11 +668,17 @@ insert_node (struct ovl_node *parent, struct ovl_node *item, bool replace, bool 
       old->loaded = 1;                 // for load_dir()
       if (retain)
         old->lookups++;
+      if (old->parent == NULL)
+          verb_print ("insert_node: ERROR (old) parent==NULL path=%s\n", old->path);
+      if (old->parent != NULL && old->parent->children == NULL)
+          verb_print ("insert_node: ERROR (old) parent->children==NULL path=%s\n", old->path);
       pthread_mutex_unlock (&ovl_node_global_lock);
       return old;
     }
 
   item->parent = parent;
+  if (item->parent && item->parent->children == NULL)
+      verb_print ("insert_node: ERROR (new) parent->children==NULL path=%s\n", item->path);
   item->loaded = 1;                    // for load_dir()
   if (retain)
     item->lookups++;
@@ -962,9 +972,10 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
             }
 
           /* If we already know the node, simply update the ino.  */
-          if (node) {
-            node->ino = st.st_ino;
-            continue;
+          if (node)
+            {
+              node->ino = st.st_ino;
+              continue;
             }
 
           debug_print ("lookup make_ovl_node %s %s\n", path, name);
@@ -1008,6 +1019,9 @@ ovl_lookup (fuse_req_t req, fuse_ino_t parent, const char *name)
 
   debug_print ("ovl_lookup(parent=%" PRIu64 ", name=%s)\n", parent, name);
 
+  if (name == NULL)
+      verb_print ("ovl_lookup: ERROR name==NULL parent=%" PRIu64 "\n", parent);
+
   memset (&e, 0, sizeof (e));
 
   node = do_lookup_file (lo, parent, name);
@@ -1034,7 +1048,8 @@ ovl_lookup (fuse_req_t req, fuse_ino_t parent, const char *name)
   fuse_reply_entry (req, &e);
 
 exit:
-  unref_node (parent);
+  if (name)
+    unref_node (parent);
   FUSE_EXIT();
 }
 
@@ -1355,7 +1370,8 @@ ovl_getxattr (fuse_req_t req, fuse_ino_t ino, const char *name, size_t size)
   if (node == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      goto exit;
+      FUSE_EXIT();
+      return;
     }
 
   if (size > 0)
@@ -2633,7 +2649,7 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
   node = do_lookup_file (lo, ino, NULL);
   if (node == NULL)
     {
-      debug_print ("ovl_link: ERROR lookup=failed ino=%" PRIu64 "s\n", ino);
+      verb_print ("ovl_link: ERROR lookup=failed ino=%" PRIu64 "s\n", ino);
       fuse_reply_err (req, ENOENT);
       goto exit;
     }
@@ -2657,7 +2673,7 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
   newparentnode = do_lookup_file (lo, newparent, NULL);
   if (newparentnode == NULL)
     {
-      debug_print ("ovl_link: ERROR lookup(newparent)=failed ino=%" PRIu64 "s\n", newparent);
+      verb_print ("ovl_link: ERROR lookup(newparent)=failed ino=%" PRIu64 "s\n", newparent);
       fuse_reply_err (req, ENOENT);
       goto exit;
     }
@@ -3267,7 +3283,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   if (pnode == NULL)
     {
       fuse_reply_err (req, ENOENT);
-      goto exit2;
+      goto exit;
     }
 
   pnode = get_node_up (lo, pnode);
@@ -3306,8 +3322,8 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   ret = rpl_stat (req, node, &e.attr);
   if (ret)
     {
-      fuse_reply_err (req, errno);
       unref_node (NODE_TO_INODE(node));
+      fuse_reply_err (req, errno);
       goto exit2;
     }
 
