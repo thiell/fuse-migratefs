@@ -3316,6 +3316,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   struct ovl_data *lo = ovl_data (req);
   struct ovl_node *pnode;
   int ret = 0;
+  int parentfd = -1;
   char path[PATH_MAX];
   struct fuse_entry_param e;
   const struct fuse_ctx *ctx = fuse_req_ctx (req);
@@ -3344,10 +3345,19 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
       goto exit2;
     }
 
+  // TODO: remove lock when node->path becomes immutable
+  pthread_mutex_lock (&ovl_node_global_lock);
   snprintf (path, sizeof(path), "%s/%s", pnode->path, name);
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
-  ret = create_directory (lo, get_upper_layer (lo)->fd, path, NULL, pnode, -1,
-                          mode & ~ctx->umask);
+  parentfd = TEMP_FAILURE_RETRY (openat (get_upper_layer (lo)->fd, pnode->path, O_DIRECTORY));
+  if (parentfd < 0)
+    {
+      fuse_reply_err (req, errno);
+      goto exit2;
+    }
+
+  ret = mkdirat (parentfd, name, mode & ~ctx->umask);
   if (ret < 0)
     {
       fuse_reply_err (req, errno);
@@ -3382,7 +3392,10 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
   e.attr_timeout = ATTR_TIMEOUT;
   e.entry_timeout = ENTRY_TIMEOUT;
   fuse_reply_entry (req, &e);
+
 exit2:
+  if (parentfd >= 0)
+    close (parentfd);
   unref_node (parent);
 exit:
   unref_node (parent);
