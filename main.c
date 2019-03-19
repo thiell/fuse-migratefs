@@ -1764,7 +1764,12 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
 
       nread = TEMP_FAILURE_RETRY (read (sfd, buf, buf_size));
       if (nread < 0)
-        goto exit;
+        {
+          verb_print ("copyup=failed call=read uid=%u st_uid=%u errno=%d written=%"PRIu64" path=%s\n",
+                      FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
+          ret = -1;
+          goto exit;
+        }
 
       if (nread == 0)
         break;
@@ -2468,7 +2473,7 @@ ovl_getattr (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   struct ovl_node *node;
   struct fuse_entry_param e;
 
-  debug_print  ("ovl_getattr(ino=%" PRIu64 "s) fi=%" PRIu64 "\n", ino, fi);
+  debug_print  ("ovl_getattr(ino=%" PRIu64 ") fi=%" PRIu64 "\n", ino, fi);
 
   if (fi == NULL)
     {
