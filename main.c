@@ -1545,16 +1545,22 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
   tmpdir_cleanup = true;
 
   ret = dfd = TEMP_FAILURE_RETRY (openat (parentfd, wd_tmp_file_name, O_RDONLY));
-  debug_print ("create_directory openat wd_tmp fd=%d errno=%d\n", ret, errno);
   if (ret < 0)
-    goto out;
+    {
+      verb_print ("create_directory=failed call=openat(tmp) errno=%d uid=%u name=%s parent=%s\n",
+                  errno, FUSE_GETCURRENTUID(), name, parent->path);
+      goto out;
+    }
 
   if (times)
     {
       ret = futimens (dfd, times);
-      debug_print ("create_directory futimens ret=%d errno=%d\n", ret, errno);
       if (ret < 0)
-        goto out;
+        {
+          verb_print ("create_directory=failed call=futimens errno=%d uid=%u name=%s parent=%s\n",
+                      errno, FUSE_GETCURRENTUID(), name, parent->path);
+          goto out;
+        }
     }
 
   if (ret == 0 && xattr_sfd >= 0)
@@ -1569,7 +1575,11 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
 
       ret = copy_xattr (xattr_sfd, dfd, buf, buf_size);
       if (ret < 0)
-        goto out;
+        {
+          verb_print ("create_directory=failed call=copy_xattr errno=%d uid=%u name=%s parent=%s\n",
+                      errno, FUSE_GETCURRENTUID(), name, parent->path);
+          goto out;
+        }
     }
 
   TEMP_FAILURE_RETRY (unlinkat (parentfd, name, 0));
