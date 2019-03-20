@@ -1476,15 +1476,22 @@ create_lower_directory (struct ovl_data *lo, int dirfd, struct ovl_node *node)
   ret = mkdirat (parentfd, node->name, 0777);
 
   if (ret == 0)
-    verb_print ("create_lower_directory=success parent=%s name=%s\n", node->parent->path, node->name);
-  else
-    verb_print ("create_lower_directory=failed call=mkdirat errno=%d parent=%s name=%s\n", errno,
-                node->parent->path, node->name);
-
-  if (ret < 0 && errno == EEXIST)
     {
+      verb_print ("create_lower_directory=success parent=%s name=%s\n", node->parent->path, node->name);
+    }
+  else if (ret < 0 && errno == EEXIST)
+    {
+      // likely conflicting parallel copyups, nothing to worry about, so just log a warning
+      verb_print ("create_lower_directory=warning call=mkdirat errno=%d parent=%s name=%s\n", errno,
+                  node->parent->path, node->name);
       ret = 0;
       errno = 0;
+    }
+  else
+    {
+      // this is a true failure
+      verb_print ("create_lower_directory=failed call=mkdirat ret=%d errno=%d parent=%s name=%s\n",
+                  ret, errno, node->parent->path, node->name);
     }
 
 out:
