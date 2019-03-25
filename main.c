@@ -1518,8 +1518,6 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
 
   debug_print ("create_directory name=%s parent->path=%s\n", name, parent->path);
 
-  snprintf (wd_tmp_file_name, sizeof(wd_tmp_file_name), ".migratefs-tmpdir-%lu", get_next_wd_counter ());
-
   // recursive creation
 
   for (;;)
@@ -1544,10 +1542,24 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
         break;
      }
 
-  ret = mkdirat (parentfd, wd_tmp_file_name, mode);
-  debug_print ("create_directory mkdirat=%d mode=%o errno=%d\n", ret, mode, errno);
-  if (ret < 0)
-    goto out;
+  for (;;)
+    {
+      snprintf (wd_tmp_file_name, sizeof(wd_tmp_file_name), ".migratefs-tmpdir-%lu", get_next_wd_counter ());
+
+      ret = mkdirat (parentfd, wd_tmp_file_name, mode);
+      if (ret < 0 && errno == EEXIST)
+        {
+          verb_print ("create_directory=warning call=mkdirat ret=%d mode=%o errno=%d\n", ret, mode, errno);
+          continue;
+        }
+
+      if (ret == 0)
+        break;
+
+      // ret < 0
+      verb_print ("create_directory=failed call=mkdirat ret=%d mode=%o errno=%d\n", ret, mode, errno);
+      goto out;
+    }
 
   tmpdir_cleanup = true;
 
