@@ -292,7 +292,7 @@ ovl_data (fuse_req_t req)
   return (struct ovl_data *) fuse_req_userdata (req);
 }
 
-static unsigned long
+static int
 get_next_wd_counter ()
 {
   static volatile int wd_counter = 1;
