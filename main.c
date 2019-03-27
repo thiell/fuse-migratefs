@@ -1519,6 +1519,7 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
   int saved_errno;
   bool tmpdir_cleanup = false;
   char wd_tmp_file_name[64];
+  int retry_cnt = 0;
 
   debug_print ("create_directory name=%s parent->path=%s\n", name, parent->path);
 
@@ -1557,36 +1558,40 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
       snprintf (wd_tmp_file_name, sizeof(wd_tmp_file_name), ".migratefs-tmpdir-%d", get_next_wd_counter ());
 
       ret = mkdirat (parentfd, wd_tmp_file_name, mode);
-      if (ret < 0 && errno == EEXIST)
+      if (ret < 0)
         {
-          verb_print ("create_directory=warning call=mkdirat ret=%d mode=%o errno=%d\n", ret, mode, errno);
-          continue;
-        }
-
-      if (ret < 0 && errno == ENOENT)
-        {
-          // very specific race condition of (empty) directory overridden by renameat() from another
-          // instance of create_directory() for the same directory, that happened between our
-          // current open and mkdirat; we need to reopen the directory and try mkdirat again.
-          verb_print ("create_directory=warning call=mkdirat ret=%d mode=%o errno=%d\n", ret, mode, errno);
-          close (parentfd);
-          parentfd = TEMP_FAILURE_RETRY (openat (dirfd, parent->path, O_DIRECTORY));
-          if (parentfd < 0)
+          if (errno == EEXIST)
             {
-              verb_print ("create_directory=warning call=openat(retry) ret=%d errno=%d path=%s\n",
-                          ret, errno, parent->path);
-              goto out;
+              verb_print ("create_directory=warning call=mkdirat ret=%d mode=%o errno=%d parent=%s\n",
+                          ret, mode, errno, parent->path);
+              continue;
             }
-          continue; // try mkdirat again
+
+          if (errno == ENOENT || errno == ESTALE)
+            {
+              if (errno == ESTALE && retry_cnt++ > 0)  // retry once for ESTALE
+                goto out;
+              // very specific race condition of (empty) directory overridden by renameat() from another
+              // instance of create_directory() for the same directory, that happened between our
+              // current open and mkdirat; we need to reopen the directory and try mkdirat again.
+              verb_print ("create_directory=warning call=mkdirat ret=%d mode=%o errno=%d\n", ret, mode, errno);
+              close (parentfd);
+              parentfd = TEMP_FAILURE_RETRY (openat (dirfd, parent->path, O_DIRECTORY));
+              if (parentfd < 0)
+                {
+                  verb_print ("create_directory=warning call=openat(retry) ret=%d errno=%d path=%s\n",
+                              ret, errno, parent->path);
+                  goto out;
+                }
+              continue; // try mkdirat again
+            }
+
+          verb_print ("create_directory=failed call=mkdirat ret=%d parentfd=%d mode=%o errno=%d\n",
+                      ret, parentfd, mode, errno);
+          goto out;
         }
-
-      if (ret == 0)
-        break;
-
-      // ret < 0
-      verb_print ("create_directory=failed call=mkdirat ret=%d parentfd=%d mode=%o errno=%d\n",
-                  ret, parentfd, mode, errno);
-      goto out;
+      // ret==0
+      break;
     }
 
   tmpdir_cleanup = true;
