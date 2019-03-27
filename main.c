@@ -1522,6 +1522,8 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
 
   debug_print ("create_directory name=%s parent->path=%s\n", name, parent->path);
 
+  ref_node (NODE_TO_INODE(parent));
+
   // recursive creation
 
   for (;;)
@@ -1547,8 +1549,8 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
           else
             goto out;
         }
-        break;
-     }
+      break;
+    }
 
   for (;;)
     {
@@ -1561,11 +1563,29 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
           continue;
         }
 
+      if (ret < 0 && errno == ENOENT)
+        {
+          // very specific race condition of (empty) directory overridden by renameat() from another
+          // instance of create_directory() for the same directory, that happened between our
+          // current open and mkdirat; we need to reopen the directory and try mkdirat again.
+          verb_print ("create_directory=warning call=mkdirat ret=%d mode=%o errno=%d\n", ret, mode, errno);
+          close (parentfd);
+          parentfd = TEMP_FAILURE_RETRY (openat (dirfd, parent->path, O_DIRECTORY));
+          if (parentfd < 0)
+            {
+              verb_print ("create_directory=warning call=openat(retry) ret=%d errno=%d path=%s\n",
+                          ret, errno, parent->path);
+              goto out;
+            }
+          continue; // try mkdirat again
+        }
+
       if (ret == 0)
         break;
 
       // ret < 0
-      verb_print ("create_directory=failed call=mkdirat ret=%d mode=%o errno=%d\n", ret, mode, errno);
+      verb_print ("create_directory=failed call=mkdirat ret=%d parentfd=%d mode=%o errno=%d\n",
+                  ret, parentfd, mode, errno);
       goto out;
     }
 
@@ -1618,10 +1638,10 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
       if (errno == ENOTEMPTY || errno == EEXIST)
         {
           // assume directory was created by another cluster node
+          verb_print ("create_directory=warning call=renameat errno=%d uid=%u name=%s parent=%s\n",
+                      errno, FUSE_GETCURRENTUID(), name, parent->path);
           ret = 0;
           errno = 0;
-          verb_print ("create_directory=warning call=renameat errno=ENOTEMPTY uid=%u name=%s parent=%s\n",
-                      FUSE_GETCURRENTUID(), name, parent->path);
         }
       else
         {
@@ -1652,6 +1672,8 @@ out:
   if (parentfd >= 0)
     close (parentfd);
 
+  unref_node (NODE_TO_INODE(parent));
+
   debug_print ("create_directory ret=%d\n", ret);
   return ret;
 }
@@ -1681,13 +1703,11 @@ create_node_directory (struct ovl_data *lo, struct ovl_node *src)
     {
       if (errno == ENOENT)
         {
-          // handle race condition when directory is removed from lower(!)
+          // handle race condition when directory was copyuped and removed from lower
           if (src->layer == get_upper_layer (lo))
-            {
-              verb_print ("create_node_directory=warning call=openat ret=%d errno=%d path=%s\n",
-                          ret, errno, src->path);
-              return 0;
-            }
+            return 0;
+          verb_print ("create_node_directory=warning call=openat ret=%d errno=%d path=%s\n",
+                      ret, errno, src->path);
         }
       return ret;
     }
@@ -1768,10 +1788,6 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
           return ret;
         }
     }
-  else
-    {
-      verb_print ("copyup=failed node->parent==NULL path=%s\n", node->path);
-    }
 
   if ((st.st_mode & S_IFMT) == S_IFDIR)
     {
@@ -1779,7 +1795,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
       if (ret < 0)
         {
           verb_print ("copyup=failed call=create_node_directory ret=%d errno=%d path=%s\n",
-                      ret, errno, node->parent);
+                      ret, errno, node->parent->path);
           goto exit;
         }
       goto success;
