@@ -1537,7 +1537,11 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
                  name, parent->path);
               ret = create_node_directory (lo, parent);
               if (ret != 0)
-                 goto out;
+                {
+                  verb_print ("create_directory=failed call=create_node_directory ret=%d errno=%d path=%s\n",
+                              ret, errno, parent->path);
+                  goto out;
+                }
               continue;
             }
           else
@@ -1664,12 +1668,29 @@ create_node_directory (struct ovl_data *lo, struct ovl_node *src)
   if (src == NULL)
     return 0;
 
+  pthread_mutex_lock (&ovl_node_global_lock);
   if (src->layer == get_upper_layer (lo))
-    return 0;
+    {
+      pthread_mutex_unlock (&ovl_node_global_lock);
+      return 0;
+    }
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   ret = sfd = TEMP_FAILURE_RETRY (openat (node_dirfd (src), src->path, O_RDONLY|O_NONBLOCK));
   if (ret < 0)
-    return ret;
+    {
+      if (errno == ENOENT)
+        {
+          // handle race condition when directory is removed from lower(!)
+          if (src->layer == get_upper_layer (lo))
+            {
+              verb_print ("create_node_directory=warning call=openat ret=%d errno=%d path=%s\n",
+                          ret, errno, src->path);
+              return 0;
+            }
+        }
+      return ret;
+    }
 
   ret = TEMP_FAILURE_RETRY (fstat (sfd, &st));
   if (ret < 0)
@@ -1700,7 +1721,11 @@ create_node_directory (struct ovl_data *lo, struct ovl_node *src)
     }
 
   if (ret == 0)
+    {
+      pthread_mutex_lock (&ovl_node_global_lock);
       src->layer = get_upper_layer (lo);
+      pthread_mutex_unlock (&ovl_node_global_lock);
+    }
 
   return ret;
 }
@@ -1738,17 +1763,25 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
       ret = create_node_directory (lo, node->parent);
       if (ret < 0)
         {
-          verb_print ("copyup=failed call=create_node_directory ret=%d errno=%d path=%s\n",
+          verb_print ("copyup=failed call=create_node_directory(parent) ret=%d errno=%d path=%s\n",
                       ret, errno, node->parent->path);
           return ret;
         }
+    }
+  else
+    {
+      verb_print ("copyup=failed node->parent==NULL path=%s\n", node->path);
     }
 
   if ((st.st_mode & S_IFMT) == S_IFDIR)
     {
       ret = create_node_directory (lo, node);
       if (ret < 0)
-        goto exit;
+        {
+          verb_print ("copyup=failed call=create_node_directory ret=%d errno=%d path=%s\n",
+                      ret, errno, node->parent);
+          goto exit;
+        }
       goto success;
     }
 
@@ -1899,8 +1932,13 @@ get_node_up (struct ovl_data *lo, struct ovl_node *node)
   debug_print ("get_node_up node_path=%s, node_layer=%s\n",
         node->path, node->layer->path);
 
+  pthread_mutex_lock (&ovl_node_global_lock);
   if (node->layer == get_upper_layer (lo))
-    return node;
+    {
+      pthread_mutex_unlock (&ovl_node_global_lock);
+      return node;
+    }
+  pthread_mutex_unlock (&ovl_node_global_lock);
 
   //
   // FUSE EXIT - copyup is performed as root
