@@ -81,6 +81,10 @@
 
 #define NODE_TO_INODE(x) ((fuse_ino_t) x)
 
+/* Check GCC version, just to be safe */
+#if !defined(__GNUC__) || (__GNUC__ < 4) || (__GNUC_MINOR__ < 1)
+# error atomic ops work only with GCC newer than version 4.1
+#endif /* GNUC >= 4.1 */
 
 #if defined(__GNUC__) && (__GNUC__ > 4 || __GNUC__ == 4 && __GNUC_MINOR__ >= 6) && !defined __cplusplus
 _Static_assert (sizeof (fuse_ino_t) >= sizeof (uintptr_t),
@@ -291,8 +295,8 @@ ovl_data (fuse_req_t req)
 static unsigned long
 get_next_wd_counter ()
 {
-  static unsigned long counter = 1;
-  return counter++;
+  static volatile int wd_counter = 1;
+  return __sync_fetch_and_add(&wd_counter, 1);
 }
 
 /* Useful in a gdb session.  */
@@ -1544,7 +1548,7 @@ create_directory (struct ovl_data *lo, int dirfd, const char *name, const struct
 
   for (;;)
     {
-      snprintf (wd_tmp_file_name, sizeof(wd_tmp_file_name), ".migratefs-tmpdir-%lu", get_next_wd_counter ());
+      snprintf (wd_tmp_file_name, sizeof(wd_tmp_file_name), ".migratefs-tmpdir-%d", get_next_wd_counter ());
 
       ret = mkdirat (parentfd, wd_tmp_file_name, mode);
       if (ret < 0 && errno == EEXIST)
@@ -1716,7 +1720,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
 
   debug_print ("copyup node->path=%s layer=%s\n", node->path, node->layer->path);
 
-  snprintf (wd_tmp_file_name, sizeof(wd_tmp_file_name), ".migratefs-copyup-%lu", get_next_wd_counter ());
+  snprintf (wd_tmp_file_name, sizeof(wd_tmp_file_name), ".migratefs-copyup-%d", get_next_wd_counter ());
 
   ret = TEMP_FAILURE_RETRY (fstatat (node_dirfd (node), node->path, &st, AT_SYMLINK_NOFOLLOW));
   if (ret < 0)
