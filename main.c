@@ -3029,7 +3029,7 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
 {
   struct ovl_node *pnode, *node, *orignode, *destnode, *destpnode;
   struct ovl_data *lo = ovl_data (req);
-  struct ovl_layer *layer;
+  struct ovl_layer *layer, *it;
   int ret;
   int saved_errno;
   int srcfd = -1;
@@ -3103,20 +3103,11 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
     */
 
   /*
-   * RENAME IS DONE IN THE SAME LAYER, ALWAYS
+   * RENAME IS DONE IN THE SAME LAYER, AND BELOW (ESP. FOR DIRECTORIES)
    * IF DEST IS PRESENT IN DIFFERENT LAYER -> UNLINK IN DIFFERENT LAYER
    *
    */
-  //if (layer == get_upper_layer (lo))
-   // {
-  debug_print ("ovl_rename_direct work in layer %s\n", layer->path);
-
-  ret = TEMP_FAILURE_RETRY (openat (layer->fd, pnode->path, O_DIRECTORY));
-  if (ret < 0)
-    goto error;
-  srcfd = ret;
-
-  debug_print ("ovl_rename_direct destpnode layer is %s\n", destpnode->layer->path);
+  debug_print ("ovl_rename_direct work in layer %s and below\n", layer->path);
 
   if (destpnode->layer != layer)
     {
@@ -3145,6 +3136,15 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
         }
     }
 
+  /* rename */
+  ret = TEMP_FAILURE_RETRY (openat (layer->fd, pnode->path, O_DIRECTORY));
+  if (ret < 0)
+    goto error;
+  srcfd = ret;
+
+  debug_print ("ovl_rename_direct destpnode layer is %s\n", destpnode->layer->path);
+
+
   ret = TEMP_FAILURE_RETRY (openat (layer->fd, destpnode->path, O_DIRECTORY));
   if (ret < 0)
     goto error;
@@ -3161,6 +3161,7 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
       debug_print ("ovl_rename_direct NOREPLACE error destnode %s already exists\n", destnode->path);
       goto error;
     }
+
   /* we cannot do do_node_rm here because of the following POSIX rule:
    * rename returns EEXIST or ENOTEMPTY if the 'to' argument is a directory and is not empty"
    * so let's try to let renameat() handle it
@@ -3180,6 +3181,53 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
     {
       debug_print ("ovl_rename_direct renameat failed errno=%d\n", errno);
       goto error;
+    }
+
+  /* Any node that is present in multiple layers needs to be renamed on each of them
+   * Note: this is normal for directory but abnormal for files, so we print a
+   * warning for files present in multiple layers so that the admin can clean them.
+   */
+  for (it = layer->next; it; it = it->next)
+    {
+      int low_srcfd, low_destfd;
+
+      ret = TEMP_FAILURE_RETRY (openat (it->fd, pnode->path, O_DIRECTORY));
+      if (ret < 0)
+        break;
+      low_srcfd = ret;
+
+      ret = TEMP_FAILURE_RETRY (openat (it->fd, destpnode->path, O_DIRECTORY));
+      if (ret < 0)
+        {
+          close (low_srcfd);
+          break;
+        }
+      low_destfd = ret;
+
+      ret = TEMP_FAILURE_RETRY (renameat (low_srcfd, name, low_destfd, newname));
+      if (ret < 0)
+        {
+          if (errno != ENOENT)
+            verb_print ("ovl_rename_direct=warning rename in lower layer=%s errno=%d path=%s name=%s\n",
+                        it->path, errno, destpnode->path, name);
+
+          close (low_srcfd);
+          close (low_destfd);
+          break;
+        }
+
+      if (!node_dirp(node))
+        {
+          /* print a warning for files only */
+          verb_print ("ovl_rename_direct=warning unexpected file in layer=%s path=%s name=%s\n",
+                      it->path, destpnode->path, name);
+        }
+
+      verb_print ("ovl_rename_direct=success renamed %s to %s in lower %s/%s\n", name, newname,
+                  it->path, destpnode->path);
+
+      close (low_srcfd);
+      close (low_destfd);
     }
 
   pthread_mutex_lock (&ovl_node_global_lock);
