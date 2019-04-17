@@ -2343,12 +2343,6 @@ ovl_do_open (fuse_req_t req, fuse_ino_t parent, const char *name, int flags, mod
 
   refcnt++;
   n = do_lookup_file (lo, parent, name);
-  if (n && (flags & O_CREAT))
-    {
-      debug_print ("ovl_do_open: %s EEXIST\n", name);
-      errno = EEXIST;
-      goto exit;
-    }
 
   if (!n)
     {
