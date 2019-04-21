@@ -252,6 +252,7 @@ struct ovl_node
   char *path;
   char *name;
   uint64_t lookups;
+  uint64_t dircnt;
   ino_t ino;
   pthread_mutex_t dirlock;
   unsigned int loaded : 1;      // for load_dir()
@@ -388,13 +389,27 @@ rpl_stat (fuse_req_t req, struct ovl_node *node, struct stat *st)
     {
       struct ovl_node *it;
 
-      st->st_nlink = 2;
 
       pthread_mutex_lock (&ovl_node_global_lock);
-      for (it = hash_get_first (node->children); it; it = hash_get_next (node->children, it))
+
+      // node->dircnt provides a cached value for st_nlink or is set to 0 if not available
+      if (node->dircnt > 0)
         {
-          if (node_dirp (it))
-            st->st_nlink++;
+          debug_print ("rpl_stat: using dircnt=%d for path=%s\n", node->dircnt, node->path);
+          st->st_nlink = node->dircnt;
+        }
+      else
+        {
+          st->st_nlink = 2;
+
+          for (it = hash_get_first (node->children); it; it = hash_get_next (node->children, it))
+            {
+              if (node_dirp (it))
+                st->st_nlink++;
+            }
+
+          node->dircnt = st->st_nlink;  // set dircnt cache
+          debug_print ("rpl_stat: computed st_nlink=%d for path=%s\n", node->dircnt, node->path);
         }
       pthread_mutex_unlock (&ovl_node_global_lock);
     }
@@ -569,6 +584,7 @@ make_ovl_node (const char *path, struct ovl_layer *layer, const char *name, ino_
 
   ret->parent = parent;
   ret->lookups = 0;
+  ret->dircnt = 0;
   if (dir_p)
     pthread_mutex_init (&ret->dirlock, NULL);
   ret->layer = layer;
@@ -651,10 +667,14 @@ insert_node (struct ovl_node *parent, struct ovl_node *item, bool replace, bool 
 
   pthread_mutex_lock (&ovl_node_global_lock);
 
+  parent->dircnt = 0;  // invalidate dircnt cache
+
   prev_parent = item->parent;
 
   if (prev_parent)
     {
+      prev_parent->dircnt = 0;  // invalidate dircnt cache
+
       if (hash_lookup (prev_parent->children, item) == item)
         hash_delete (prev_parent->children, item);
     }
@@ -720,6 +740,7 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
     }
 
   pthread_mutex_lock (&ovl_node_global_lock);
+  n->dircnt = 0;  // invalidate dircnt cache
   for (nit = hash_get_first (n->children); nit; nit = hash_get_next (n->children, nit))
     nit->loaded = 0;
   pthread_mutex_unlock (&ovl_node_global_lock);
@@ -2016,10 +2037,14 @@ update_node (struct ovl_node *parent, struct ovl_node *item)
   struct ovl_node *old = NULL, *prev_parent;
   int ret;
 
+  parent->dircnt = 0;  // invalidate dircnt cache
+
   prev_parent = item->parent;
 
   if (prev_parent)
     {
+      prev_parent->dircnt = 0;  // invalidate dircnt cache
+
       if (hash_lookup (prev_parent->children, item) == item)
         hash_delete (prev_parent->children, item);
     }
@@ -2186,6 +2211,7 @@ do_node_rm (fuse_req_t req, fuse_ino_t parent, const char *name, bool dirp)
   rm = hash_delete (pnode->children, &key);
   if (rm)
       node_free (rm);
+  pnode->dircnt = 0;  // invalidate dircnt cache
   pthread_mutex_unlock (&ovl_node_global_lock);
 
   unref_node (parent);
@@ -3227,6 +3253,7 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
 
   pthread_mutex_lock (&ovl_node_global_lock);
   hash_delete (pnode->children, node);
+  pnode->dircnt = 0;  // invalidate dircnt cache
   free (node->name);
   node->name = strdup (newname);
   if (node->name == NULL)
