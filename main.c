@@ -248,13 +248,14 @@ struct ovl_node
 {
   struct ovl_node *parent;
   Hash_table *children;
-  struct ovl_layer *layer, *last_layer;
+  struct ovl_layer *layer;
   char *path;
   char *name;
   uint64_t lookups;
   ino_t ino;
   pthread_mutex_t dirlock;
-  unsigned int loaded : 1;
+  unsigned int loaded : 1;      // for load_dir()
+  unsigned int multilayer : 1;  // node in multiple layers? to enable some optimization
 };
 
 struct ovl_data
@@ -382,7 +383,8 @@ rpl_stat (fuse_req_t req, struct ovl_node *node, struct stat *st)
     }
 
   st->st_ino = node->ino;
-  if (ret == 0 && node_dirp (node))
+
+  if (ret == 0 && node_dirp (node) && node->multilayer)
     {
       struct ovl_node *it;
 
@@ -565,7 +567,6 @@ make_ovl_node (const char *path, struct ovl_layer *layer, const char *name, ino_
       return NULL;
     }
 
-  ret->last_layer = NULL;
   ret->parent = parent;
   ret->lookups = 0;
   if (dir_p)
@@ -592,6 +593,9 @@ make_ovl_node (const char *path, struct ovl_layer *layer, const char *name, ino_
       return NULL;
     }
 
+  ret->loaded = 0;
+  ret->multilayer = 0;
+
   if (!dir_p)
     ret->children = NULL;
   else
@@ -612,6 +616,7 @@ make_ovl_node (const char *path, struct ovl_layer *layer, const char *name, ino_
       struct stat st;
       struct ovl_layer *it;
       char path[PATH_MAX];
+      int layercnt = 0;
 
       strncpy (path, ret->path, sizeof (path) - 1);
       path[PATH_MAX - 1] = '\0';
@@ -622,13 +627,16 @@ make_ovl_node (const char *path, struct ovl_layer *layer, const char *name, ino_
             continue;
 
           if (fstat (fd, &st) == 0)
-            ret->ino = st.st_ino;
+            {
+              ret->ino = st.st_ino;
+              layercnt++;
+            }
 
           close (fd);
-
-          if (parent && parent->last_layer == it)
-            break;
         }
+
+      if (layercnt > 1)
+        ret->multilayer = 1;
     }
 
   //verb_print ("make_ovl_node: ALLOC path=%s name=%s\n", ret->path, ret->name);
@@ -699,19 +707,9 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
   struct stat st;
   struct ovl_layer *it, *upper_layer = get_upper_layer (lo);
   struct ovl_node *nit, *next;
+  int dir_layercnt = 0;
 
-  //fprintf (stderr, "load_dir path=%s name=%s\n", path, name);
-
-  if (n)
-    {
-      //for (nit = hash_get_first (n->children); nit; nit = hash_get_next (n->children, nit))
-      //  nit->loaded = 0;
-        //node_mark_all_free (it);
-      //node_free(n);
-      //jhash_clear(n->children);
-      //n->children = hash_initialize (10, NULL, node_hasher, node_compare, node_free);
-    }
-  else
+  if (!n)
     {
       n = make_ovl_node (path, layer, name, 0, true, NULL);
       if (n == NULL)
@@ -735,6 +733,8 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
             return NULL;        // propagate error including EACCES
           continue;
         }
+
+      dir_layercnt++;
 
       dp = fdopendir (fd);
       if (dp == NULL)
@@ -782,7 +782,12 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
           if (child)
             {
               if (!child->loaded)
-                child->layer = it;  // adjust layer
+                {
+                  child->layer = it;  // adjust layer
+                  child->multilayer = 0;
+                }
+              else
+                  child->multilayer = 1;
               child->loaded = 1;
               pthread_mutex_unlock (&ovl_node_global_lock);
               continue;
@@ -811,12 +816,13 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
           // child->loaded set by insert_node w/ mutex locked
         }
       closedir (dp);
-
-      if (n->last_layer == it)
-        break;
     }
 
   pthread_mutex_lock (&ovl_node_global_lock);
+
+  // refresh multilayer bit of directory
+  n->multilayer = (dir_layercnt > 1) ? 1 : 0;
+
   for (nit = hash_get_first (n->children); nit; nit = next)
     {
       next = hash_get_next (n->children, nit);
@@ -995,11 +1001,6 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
               errno = ENOMEM;
               return NULL;
             }
-
-          if (node->last_layer)
-            break;
-          if (pnode && pnode->last_layer == it)
-            break;
         }
     }
 
