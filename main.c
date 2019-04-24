@@ -76,7 +76,16 @@
 
 #include <pthread.h>
 
-#define ATTR_TIMEOUT 0
+/* We consider short caching of ATTR safe because we check attributes
+ * on lookup. This allows to reduce the number of ovl_getattr() calls,
+ * that would otherwise follow ovl_lookup() to get the attributes in
+ * case of stat() for example.
+ */
+#define ATTR_TIMEOUT 1
+
+/* However, we don't cache entries because layers may be modified
+ * directly and/or remotely.
+ */
 #define ENTRY_TIMEOUT 0
 
 #define NODE_TO_INODE(x) ((fuse_ino_t) x)
