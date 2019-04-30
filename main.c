@@ -1787,7 +1787,7 @@ create_node_directory (struct ovl_data *lo, struct ovl_node *src)
 }
 
 static int
-copyup (struct ovl_data *lo, struct ovl_node *node)
+copyup (struct ovl_data *lo, struct ovl_node *node, bool truncate)
 {
   int saved_errno;
   int ret = -1;
@@ -1872,36 +1872,39 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   if (dfd < 0)
     goto exit;
 
-  buf = malloc (buf_size);
-  if (buf == NULL)
-    goto exit;
-  for (;;)
+  if (!truncate)
     {
-      uint64_t written;
-      int nread;
-
-      nread = TEMP_FAILURE_RETRY (read (sfd, buf, buf_size));
-      if (nread < 0)
+      buf = malloc (buf_size);
+      if (buf == NULL)
+        goto exit;
+      for (;;)
         {
-          verb_print ("copyup=failed call=read uid=%u st_uid=%u errno=%d written=%"PRIu64" path=%s\n",
-                      FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
-          ret = -1;
-          goto exit;
+          uint64_t written;
+          int nread;
+
+          nread = TEMP_FAILURE_RETRY (read (sfd, buf, buf_size));
+          if (nread < 0)
+            {
+              verb_print ("copyup=failed call=read uid=%u st_uid=%u errno=%d written=%"PRIu64" path=%s\n",
+                          FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
+              ret = -1;
+              goto exit;
+            }
+
+          if (nread == 0)
+            break;
+
+          written = 0;
+          {
+            ret = TEMP_FAILURE_RETRY (write (dfd, buf + written, nread));
+            if (ret < 0)
+              goto exit;
+            written += ret;
+            total_written += ret;
+            nread -= ret;
+          }
+          while (nread);
         }
-
-      if (nread == 0)
-        break;
-
-      written = 0;
-      {
-        ret = TEMP_FAILURE_RETRY (write (dfd, buf + written, nread));
-        if (ret < 0)
-          goto exit;
-        written += ret;
-        total_written += ret;
-        nread -= ret;
-      }
-      while (nread);
     }
 
   times[0] = st.st_atim;
@@ -1933,13 +1936,15 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
   node->layer = get_upper_layer (lo);
   pthread_mutex_unlock (&ovl_node_global_lock);
 
-  verb_print ("copyup=success uid=%u st_uid=%u written=%"PRIu64" path=%s\n",
-              FUSE_GETCURRENTUID(), st.st_uid, total_written, node->path);
+  verb_print ("copyup=success uid=%u st_uid=%u written=%"PRIu64" truncate=%s path=%s\n",
+              FUSE_GETCURRENTUID(), st.st_uid, total_written,
+              truncate ? "true" : "false", node->path);
 
  exit:
   if (ret < 0)
-      verb_print ("copyup=failed uid=%u st_uid=%u errno=%d written=%"PRIu64" path=%s\n",
-                  FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
+      verb_print ("copyup=failed uid=%u st_uid=%u errno=%d written=%"PRIu64" truncate=%s path=%s\n",
+                  FUSE_GETCURRENTUID(), st.st_uid, errno, total_written,
+                  truncate ? "true" : "false", node->path);
 
   saved_errno = errno;
   free (buf);
@@ -1977,7 +1982,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node)
 }
 
 static struct ovl_node *
-get_node_up (struct ovl_data *lo, struct ovl_node *node)
+get_node_up (struct ovl_data *lo, struct ovl_node *node, bool truncate)
 {
   int ret;
 
@@ -1997,7 +2002,7 @@ get_node_up (struct ovl_data *lo, struct ovl_node *node)
   //
   FUSE_ENTER_ROOTPRIV();
 
-  ret = copyup (lo, node);
+  ret = copyup (lo, node, truncate);
 
   //
   // FUSE ENTER - done copyup as root
@@ -2283,7 +2288,7 @@ ovl_setxattr (fuse_req_t req, fuse_ino_t ino, const char *name,
     }
 
 #if COPYUP_ON_SETXATTR
-  node = get_node_up (lo, node);
+  node = get_node_up (lo, node, false);
   if (node == NULL)
     {
       fuse_reply_err (req, errno);
@@ -2341,7 +2346,7 @@ ovl_removexattr (fuse_req_t req, fuse_ino_t ino, const char *name)
     }
 
 #if COPYUP_ON_SETXATTR
-  node = get_node_up (lo, node);
+  node = get_node_up (lo, node, false);
   if (node == NULL)
     {
       fuse_reply_err (req, errno);
@@ -2401,7 +2406,7 @@ ovl_do_open (fuse_req_t req, fuse_ino_t parent, const char *name, int flags, mod
 
       debug_print ("ovl_do_open get_node_up p->path=%s\n", p->path);
 
-      p = get_node_up (lo, p);
+      p = get_node_up (lo, p, false);
       if (p == NULL)
         goto exit;
 
@@ -2446,7 +2451,8 @@ ovl_do_open (fuse_req_t req, fuse_ino_t parent, const char *name, int flags, mod
     {
       debug_print ("ovl_do_open read/write calling get_node_up (%s), layer %s\n",
             n->path, n->layer->path);
-      n = get_node_up (lo, n);
+
+      n = get_node_up (lo, n, flags & O_TRUNC);  // do not copyup data if O_TRUNC is specified
       if (n == NULL)
         goto exit;
 
@@ -2835,7 +2841,7 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
   //pnode = node->parent;
 
 #if 0
-  node = get_node_up (lo, node);
+  node = get_node_up (lo, node, false);
   if (node == NULL)
     {
       fuse_reply_err (req, errno);
@@ -2861,7 +2867,7 @@ ovl_link (fuse_req_t req, fuse_ino_t ino, fuse_ino_t newparent, const char *newn
       if (layer == get_upper_layer (lo))
         {
           // normal copyup when we work in upper
-          newparentnode = get_node_up (lo, newparentnode);
+          newparentnode = get_node_up (lo, newparentnode, false);
           if (newparentnode == NULL)
             goto error;
           debug_print ("ovk_link newparentnode %s is now in layer %s\n",
@@ -2966,7 +2972,7 @@ ovl_symlink (fuse_req_t req, const char *link, fuse_ino_t parent, const char *na
       goto exit;
     }
 
-  pnode = get_node_up (lo, pnode);
+  pnode = get_node_up (lo, pnode, false);
   if (pnode == NULL)
     {
       fuse_reply_err (req, errno);
@@ -3146,7 +3152,7 @@ ovl_rename_direct (fuse_req_t req, fuse_ino_t parent, const char *name,
       if (layer == get_upper_layer (lo))
         {
           // normal copyup when we work in upper
-          destpnode = get_node_up (lo, destpnode);
+          destpnode = get_node_up (lo, destpnode, false);
           if (destpnode == NULL)
             goto error;
           debug_print ("ovl_rename_direct destpnode %s is now in layer %s\n",
@@ -3377,7 +3383,7 @@ ovl_readlink (fuse_req_t req, fuse_ino_t ino)
     }
 
   // copyup all symlinks read
-  node = get_node_up (lo, node);
+  node = get_node_up (lo, node, false);
   if (node == NULL)
     {
       fuse_reply_err (req, errno);
@@ -3434,7 +3440,7 @@ ovl_mknod (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode, dev
       goto exit;
     }
 
-  pnode = get_node_up (lo, pnode);
+  pnode = get_node_up (lo, pnode, false);
   if (pnode == NULL)
     {
       fuse_reply_err (req, errno);
@@ -3514,7 +3520,7 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
       goto exit;
     }
 
-  pnode = get_node_up (lo, pnode);
+  pnode = get_node_up (lo, pnode, false);
   if (pnode == NULL)
     {
       fuse_reply_err (req, errno);
