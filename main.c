@@ -26,6 +26,7 @@
 #define FUSE_USE_VERSION 32
 #define _FILE_OFFSET_BITS 64
 #define ENABLE_IOCTL 0
+#define MIGRATEFS_MT 1
 #define MIGRATEFS_MT_MAX_IDLE_THREADS 10
 #define MIGRATEFS_MT_CLONE_FD false
 
@@ -276,6 +277,7 @@ struct ovl_data
   char *lowerdir;
   char *upperdir;
   unsigned int max_idle_threads;
+  int mt;
   struct ovl_layer *layers;
 
   struct ovl_node *root;
@@ -284,6 +286,8 @@ struct ovl_data
 static const struct fuse_opt ovl_opts[] = {
   {"max_idle_threads=%u",
    offsetof (struct ovl_data, max_idle_threads), 0},
+  {"mt=%d",
+   offsetof (struct ovl_data, mt), 0},
   {"lowerdir=%s",
    offsetof (struct ovl_data, lowerdir), 0},
   {"upperdir=%s",
@@ -3777,6 +3781,7 @@ main (int argc, char *argv[])
                         .lowerdir = NULL,
                         .mountpoint = NULL,
                         .max_idle_threads = MIGRATEFS_MT_MAX_IDLE_THREADS,
+                        .mt = MIGRATEFS_MT,
   };
   int ret = -1;
   struct fuse_loop_config fusecfg;
@@ -3867,7 +3872,10 @@ main (int argc, char *argv[])
     }
   fuse_daemonize (opts.foreground);
 
-  ret = fuse_session_loop_mt (se, &fusecfg);
+  if (lo.mt)
+    ret = fuse_session_loop_mt (se, &fusecfg);
+  else
+    ret = fuse_session_loop (se);
 
   fuse_session_unmount (se);
 err_out3:
