@@ -383,6 +383,20 @@ has_prefix (const char *str, const char *pref)
   return false;
 }
 
+static ino_t
+masked_inode(ino_t ino, struct ovl_layer *layer)
+{
+  /* Use high 4-bits for layer ID */
+
+  uint64_t layerid = 1ULL;  // upper uses 0x1
+
+  // lowers use higher ids
+  if (layer->low)  // TODO: change boolean to layer index to support multiple lowers
+    layerid = 2ULL;
+
+  return (layerid << 60ULL) + (ino & ~(layerid << 60ULL));
+}
+
 static int
 rpl_stat (fuse_req_t req, struct ovl_node *node, struct stat *st)
 {
@@ -657,7 +671,7 @@ make_ovl_node (const char *path, struct ovl_layer *layer, const char *name, ino_
 
           if (fstat (fd, &st) == 0)
             {
-              ret->ino = st.st_ino;
+              ret->ino = masked_inode(st.st_ino, it);
               layercnt++;
             }
 
@@ -1018,7 +1032,7 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
           /* If we already know the node, simply update the ino.  */
           if (node)
             {
-              node->ino = st.st_ino;
+              node->ino = masked_inode(st.st_ino, it);
               continue;
             }
 
