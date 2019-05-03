@@ -56,9 +56,6 @@
 #include <errno.h>
 #include <err.h>
 #include <error.h>
-#ifdef HAVE_SYS_SENDFILE_H
-# include <sys/sendfile.h>
-#endif
 #include <inttypes.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -1794,37 +1791,6 @@ create_node_directory (struct ovl_data *lo, struct ovl_node *src)
 }
 
 static int
-copy_fd_to_fd (int sfd, int dfd, char *buf, size_t buf_size, off_t *copied)
-{
-  int ret;
-
-  for (;;)
-    {
-      int written;
-      int nread;
-
-      nread = TEMP_FAILURE_RETRY (read (sfd, buf, buf_size));
-      if (nread < 0)
-        return nread;
-
-      if (nread == 0)
-        break;
-
-      written = 0;
-      {
-        ret = TEMP_FAILURE_RETRY (write (dfd, buf + written, nread));
-        if (ret < 0)
-          return ret;
-        written += ret;
-        *copied += ret;
-        nread -= ret;
-      }
-      while (nread);
-    }
-  return 0;
-}
-
-static int
 copyup (struct ovl_data *lo, struct ovl_node *node, bool truncate)
 {
   int saved_errno;
@@ -1835,8 +1801,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node, bool truncate)
   char *buf = NULL;
   struct timespec times[2];
   char wd_tmp_file_name[32];
-  off_t copied = 0;
-  bool data_copied = false;
+  uint64_t total_written = 0;
 
   debug_print ("copyup node->path=%s layer=%s\n", node->path, node->layer->path);
 
@@ -1911,50 +1876,38 @@ copyup (struct ovl_data *lo, struct ovl_node *node, bool truncate)
   if (dfd < 0)
     goto exit;
 
-  if (truncate)
-    data_copied = true;
-  else
+  if (!truncate)
     {
       buf = malloc (buf_size);
       if (buf == NULL)
         goto exit;
-    }
-
-#ifdef HAVE_SYS_SENDFILE_H
-  if (! data_copied)
-    {
-      while (copied < st.st_size)
+      for (;;)
         {
-          off_t tocopy = st.st_size - copied;
-          ssize_t n = TEMP_FAILURE_RETRY (sendfile (dfd, sfd, NULL, tocopy > SIZE_MAX ? SIZE_MAX : (size_t) tocopy));
-          if (n < 0)
+          uint64_t written;
+          int nread;
+
+          nread = TEMP_FAILURE_RETRY (read (sfd, buf, buf_size));
+          if (nread < 0)
             {
-              verb_print ("copyup=warning call=sendfile uid=%u st_uid=%u errno=%d path=%s\n",
-                          FUSE_GETCURRENTUID(), st.st_uid, errno, node->path);
-              /* On failure, fallback to the read/write loop.  */
-              ret = copy_fd_to_fd (sfd, dfd, buf, buf_size, &copied);
-              if (ret < 0)
-                {
-                  verb_print ("copyup=failed call=copy_fd_to_fd uid=%u st_uid=%u errno=%d path=%s\n",
-                              FUSE_GETCURRENTUID(), st.st_uid, errno, node->path);
-                  goto exit;
-                }
+              verb_print ("copyup=failed call=read uid=%u st_uid=%u errno=%d written=%"PRIu64" path=%s\n",
+                          FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
+              ret = -1;
+              goto exit;
             }
-          else
-            copied += n;
-	    }
-      data_copied = true;
-    }
-#endif
 
-  if (! data_copied)
-    {
-      ret = copy_fd_to_fd (sfd, dfd, buf, buf_size, &copied);
-      if (ret < 0)
-        {
-          verb_print ("copyup=failed call=copy_fd_to_fd uid=%u st_uid=%u errno=%d path=%s\n",
-                      FUSE_GETCURRENTUID(), st.st_uid, errno, node->path);
-          goto exit;
+          if (nread == 0)
+            break;
+
+          written = 0;
+          {
+            ret = TEMP_FAILURE_RETRY (write (dfd, buf + written, nread));
+            if (ret < 0)
+              goto exit;
+            written += ret;
+            total_written += ret;
+            nread -= ret;
+          }
+          while (nread);
         }
     }
 
@@ -1988,13 +1941,13 @@ copyup (struct ovl_data *lo, struct ovl_node *node, bool truncate)
   pthread_mutex_unlock (&ovl_node_global_lock);
 
   verb_print ("copyup=success uid=%u st_uid=%u written=%"PRIu64" truncate=%s path=%s\n",
-              FUSE_GETCURRENTUID(), st.st_uid, copied,
+              FUSE_GETCURRENTUID(), st.st_uid, total_written,
               truncate ? "true" : "false", node->path);
 
  exit:
   if (ret < 0)
       verb_print ("copyup=failed uid=%u st_uid=%u errno=%d written=%"PRIu64" truncate=%s path=%s\n",
-                  FUSE_GETCURRENTUID(), st.st_uid, errno, copied,
+                  FUSE_GETCURRENTUID(), st.st_uid, errno, total_written,
                   truncate ? "true" : "false", node->path);
 
   saved_errno = errno;
