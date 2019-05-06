@@ -1035,7 +1035,6 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
   if (node == NULL)
     {
       struct ovl_layer *it;
-      struct ovl_layer *upper_layer = get_upper_layer (lo);
 
       for (it = lo->layers; it; it = it->next)
         {
