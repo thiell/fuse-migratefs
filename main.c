@@ -1009,7 +1009,7 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
 
   if (node != NULL)
     {
-      // checked on cached layer that it is up-to-date...
+      // check on cached layer that the node is up-to-date...
       snprintf (path, sizeof(path), "%s/%s", pnode->path, name);
       ret = TEMP_FAILURE_RETRY (fstatat (node->layer->fd, path, &st, AT_SYMLINK_NOFOLLOW));
       if (ret < 0)
