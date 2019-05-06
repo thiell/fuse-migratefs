@@ -410,7 +410,7 @@ rpl_stat (fuse_req_t req, struct ovl_node *node, struct stat *st)
       return ret;
     }
 
-  st->st_ino = node->ino;
+  st->st_ino = masked_inode(st->st_ino, node->layer);
 
   if (ret == 0 && node_dirp (node) && node->multilayer)
     {
