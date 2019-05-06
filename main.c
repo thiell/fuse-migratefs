@@ -972,8 +972,11 @@ read_dirs (char *path, bool low, struct ovl_layer *layers)
 static struct ovl_node *
 do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
 {
-  struct ovl_node key;
+  struct ovl_node key, *rm;
   struct ovl_node *node, *pnode;
+  struct stat st;
+  int ret;
+  char path[PATH_MAX];
 
   pthread_mutex_lock (&ovl_node_global_lock);
 
@@ -1003,12 +1006,35 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
   if (node)
     node->lookups++;
   pthread_mutex_unlock (&ovl_node_global_lock);
+
+  if (node != NULL)
+    {
+      // checked on cached layer that it is up-to-date...
+      snprintf (path, sizeof(path), "%s/%s", pnode->path, name);
+      ret = TEMP_FAILURE_RETRY (fstatat (node->layer->fd, path, &st, AT_SYMLINK_NOFOLLOW));
+      if (ret < 0)
+        {
+          verb_print ("do_lookup_file=warning call=fstatat errno=%d path=%s layer=%s\n",
+                      errno, node->path, node->layer->path);
+
+          key.name = (char *) name;
+          pthread_mutex_lock (&ovl_node_global_lock);
+          rm = hash_delete (pnode->children, &key);
+          if (rm)
+              node_free (rm);
+          pnode->dircnt = 0;  // invalidate dircnt cache
+          pthread_mutex_unlock (&ovl_node_global_lock);
+          node = NULL;  // full check
+        }
+      else
+        {
+          node->ino = masked_inode(st.st_ino, node->layer);
+        }
+    }
+
   if (node == NULL)
     {
-      int ret;
-      char path[PATH_MAX];
       struct ovl_layer *it;
-      struct stat st;
       struct ovl_layer *upper_layer = get_upper_layer (lo);
 
       for (it = lo->layers; it; it = it->next)
@@ -1051,6 +1077,7 @@ do_lookup_file (struct ovl_data *lo, fuse_ino_t parent, const char *name)
             }
         }
     }
+
 
   if (node == NULL)
     {
@@ -3523,18 +3550,18 @@ ovl_mkdir (fuse_req_t req, fuse_ino_t parent, const char *name, mode_t mode)
 
   debug_print ("ovl_mkdir(ino=%" PRIu64 ", name=%s, mode=%d)\n", parent, name, mode);
 
+  pnode = do_lookup_file (lo, parent, NULL);
+  if (pnode == NULL)
+    {
+      fuse_reply_err (req, ENOENT);
+      goto exit;
+    }
+
   node = do_lookup_file (lo, parent, name);
   if (node != NULL)
     {
       unref_node (NODE_TO_INODE(node));
       fuse_reply_err (req, EEXIST);
-      goto exit;
-    }
-
-  pnode = do_lookup_file (lo, parent, NULL);
-  if (pnode == NULL)
-    {
-      fuse_reply_err (req, ENOENT);
       goto exit;
     }
 
