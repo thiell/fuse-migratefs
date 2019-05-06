@@ -1,5 +1,5 @@
 AC_PREREQ([2.69])
-AC_INIT([fuse-migratefs], [0.5.2], [sthiell@stanford.edu])
+AC_INIT([fuse-migratefs], [0.5.3], [sthiell@stanford.edu])
 AC_CONFIG_SRCDIR([main.c])
 AC_CONFIG_HEADERS([config.h])
 
