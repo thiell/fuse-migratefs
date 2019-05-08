@@ -1836,7 +1836,7 @@ copyup (struct ovl_data *lo, struct ovl_node *node, bool truncate)
   int saved_errno;
   int ret = -1;
   int dfd = -1, sfd = -1, parentfd = -1;
-  struct stat st;
+  struct stat st, st_dummy;
   const size_t buf_size = 1 << 22;  // 4MB
   char *buf = NULL;
   struct timespec times[2];
@@ -1967,11 +1967,28 @@ copyup (struct ovl_data *lo, struct ovl_node *node, bool truncate)
   if (ret < 0)
     goto exit;
 
-  /* Finally, move the file to its destination.  */
-  ret = TEMP_FAILURE_RETRY (renameat (parentfd, wd_tmp_file_name,
-                            get_upper_layer (lo)->fd, node->path));
+  // Re-test target presence before renameat() so that the first copyup wins!
+  // Ideally replace fstatat+renameat with renameat2 if supported to avoid races
+  ret = TEMP_FAILURE_RETRY (fstatat (get_upper_layer (lo)->fd, node->path, &st_dummy, AT_SYMLINK_NOFOLLOW));
   if (ret < 0)
-    goto exit;
+    {
+      if (errno != ENOENT)
+        verb_print ("copyup=warning call=fstatat uid=%u st_uid=%u errno=%d written=%"PRIu64" path=%s\n",
+                    FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
+
+      /* Finally, move the file to its destination.  */
+      ret = TEMP_FAILURE_RETRY (renameat (parentfd, wd_tmp_file_name,
+                                get_upper_layer (lo)->fd, node->path));
+      if (ret < 0)
+        goto exit;
+
+    }
+  else
+    {
+      // file exists! do not rename and just assume a previous successful copyup
+      verb_print ("copyup=warning SKIP_ALREADY_EXISTS uid=%u st_uid=%u written=%"PRIu64" path=%s\n",
+                  FUSE_GETCURRENTUID(), st.st_uid, total_written, node->path);
+    }
 
  success:
   ret = 0;
