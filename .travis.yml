@@ -25,6 +25,15 @@ notifications:
   slack:
     secure: YxTODwJMNPymwu4Vm0GqYC3QKXnZLjUb5HUdp2mxTsJCmuwR7fVj8gFU/vRP21Kdx/EJqnDnnGCatbmTWwawt3LYjoYqgZO/+zvaXY3xqEj7y/fZ34/0s37nY1RE/nXPBTE30SvAuyDfvqhyjKUBOymZik67Hp0k/BzpCdaeXOm3gzHhBMuiNBx+q3POC4EB+9cf4t3VjCrJIz+1UxzwIvzYPEC2cWN9xTV+B5qIsT4AlN+qMzNr37ECRJUhyaj0BMCsrKQA/E6QdzQJeCFIG+5a0Pqvm2skUZHEiNKjj0aqhGji3kOTAhNMul/247nEb4HWlRSzlBqlc7mVtBXA8hIToKBBH0tpMJI7gouMtNPAML1zd/Y3DSq6xUu7vsUNAiDYB32/VL0QMTVLzNFCKtuNp0FzP0m8s69RV1jZfHlfpcPgQOjb8LLpWpgDef+8+qoddrftEUFLDlLZ/1g5fm147wmPJTNbwI1bbbN4qWyDKkGekgdSTr70XD5dIq2THL6bzcW7CnXOcVcPRv43SC2GKTZv2Kgwt/KzfaOnXMn2JIWxRGodeL4yhbXHQHhGtbbOUhHER6L0ZRZtIu2iqNF/GogKHaBBs2tliLKGtceGFnv3Ikyisy8YeHPr12yMN4QjpQi5bRZstGXoJ2Z/5s73vSIBkIObShqdkDQ0Z6E=
 before_install:
+- |
+  # check that we actually need to build anything
+  if [ "$TRAVIS_PULL_REQUEST" != "false" ]; then
+      TRAVIS_COMMIT_RANGE="FETCH_HEAD...$TRAVIS_BRANCH"
+  fi
+  git diff --name-only $TRAVIS_COMMIT_RANGE | grep -qvE '(README.md)|(COPYING)/' || {
+      echo "Only non-source files were updated, no need to trigger a build."
+      exit
+  }
 - sudo mkdir -p /lower /upper /merged
 - (wget http://download.tuxera.com/sw/qa/pjd-fstest-20090130-RC.tgz; tar xf pjd-fstest-20090130-RC.tgz;
   cd pjd-fstest-20090130-RC; gcc -Wall -DHAS_ACL fstest.c -o fstest -lacl; patch -p1
