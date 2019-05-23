@@ -1,5 +1,7 @@
 # migratefs
 
+[![Build Status](https://travis-ci.org/stanford-rc/fuse-migratefs.svg?branch=master)](https://travis-ci.org/stanford-rc/fuse-migratefs)
+
 _`migratefs` is a filesystem overlay for transparent, distributed migration of
 active data across separate storage systems._
 
@@ -130,7 +132,7 @@ move all of its actively-used data to a new storage system.
 > Many computing centers define purge policies on their large filesystems, that
 automatically delete files based on their age, access patterns, etc. Enabling
 `migratefs` over purged filesystems makes it easier to define the migration
-period, as files that are actively used will be transfered over to the new
+period, as files that are actively used will be transferred over to the new
 filesystem, while the files that sit idle will progressively be removed by the
 existing purge policies. In the end, all the new data will have been moved over
 to the new filesystem, and the old filesystem will be empty, so it could be
@@ -182,8 +184,8 @@ src="https://docs.google.com/drawings/d/e/2PACX-1vT0i3mCSl-22U8e-hu3uNH81AN2vH-j
 During the migration period:
 * all of the newly created files will be physically stored on the new
   filesystem,
-* all the existing files that have been accessed will have been migrated to the
-  new system,
+* all the existing files that have been accessed will be migrated to the new
+  system,
 * the purge policies running on the old system will progressively delete the
   files that are not accessed, and empty it out.
 
@@ -209,7 +211,7 @@ to use natively, without any old data lingering around.
 * distributes the data migration across all the hosts that access the
   filesystem
 * completely transparent for the end users, they don't even need to know
-  abouit `migratefs`
+  about `migratefs`
 
 
 ### In practice
@@ -229,13 +231,20 @@ to use natively, without any old data lingering around.
 
 `migratefs` requires [`libfuse`](https://github.com/libfuse/libfuse) 3.x.
 
+A specfile for CentOS 7 can be found [here](https://github.com/stanford-rc/fuse3-centos7).
+
 ### Installation
 
 ```
-$ configure
+$ ./autogen.sh
+$ ./configure
 $ make
 ```
-A SPEC file is provided to build a RPM, as well as a Docker file
+
+To build a RPM:
+```
+$ make rpm
+```
 
 ### Execution
 
