@@ -140,7 +140,6 @@ static void FUSE_ENTER(fuse_req_t req)
 {
   const struct fuse_ctx *ctx = fuse_req_ctx (req);
   int ret;
-  int i;
   gid_t *suppl_gids;
   uid_t *ctx_uid_ptr;
 
