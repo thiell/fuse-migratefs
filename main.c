@@ -1916,11 +1916,13 @@ copyup (struct ovl_data *lo, struct ovl_node *node, bool truncate)
   if (dfd < 0)
     goto exit;
 
+  // buf is used for both file content copy and copy_xattr()
+  buf = malloc (buf_size);
+  if (buf == NULL)
+    goto exit;
+
   if (!truncate)
     {
-      buf = malloc (buf_size);
-      if (buf == NULL)
-        goto exit;
       for (;;)
         {
           uint64_t written;
