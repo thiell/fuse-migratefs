@@ -1957,17 +1957,29 @@ copyup (struct ovl_data *lo, struct ovl_node *node, bool truncate)
   times[1] = st.st_mtim;
   ret = TEMP_FAILURE_RETRY (futimens (dfd, times));
   if (ret < 0)
-    goto exit;
+    {
+      verb_print ("copyup=failed call=futimens uid=%u st_uid=%u errno=%d written=%"PRIu64" path=%s\n",
+                  FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
+      goto exit;
+    }
 
   ret = copy_xattr (sfd, dfd, buf, buf_size);
   if (ret < 0)
-    goto exit;
+    {
+      verb_print ("copyup=failed call=copy_xattr uid=%u st_uid=%u errno=%d written=%"PRIu64" path=%s\n",
+                  FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
+      goto exit;
+    }
 
   // Set original file ownership
   ret = TEMP_FAILURE_RETRY (fchownat(parentfd, wd_tmp_file_name, st.st_uid,
                                      st.st_gid, AT_SYMLINK_NOFOLLOW));
   if (ret < 0)
-    goto exit;
+    {
+      verb_print ("copyup=failed call=fchownat uid=%u st_uid=%u errno=%d written=%"PRIu64" path=%s\n",
+                  FUSE_GETCURRENTUID(), st.st_uid, errno, total_written, node->path);
+      goto exit;
+    }
 
   // Re-test target presence before renameat() so that the first copyup wins!
   // Ideally replace fstatat+renameat with renameat2 if supported to avoid races
