@@ -86,16 +86,3 @@ diff -urp pjd-fstest-20090130-RC.orig/tests/xacl/01.t pjd-fstest-20090130-RC/tes
  #
  # Clean
  #
-diff -urp pjd-fstest-20090130-RC.orig/tests/xacl/04.t pjd-fstest-20090130-RC/tests/xacl/04.t
---- pjd-fstest-20090130-RC.orig/tests/xacl/04.t	2019-02-23 10:46:16.769691096 -0800
-+++ pjd-fstest-20090130-RC/tests/xacl/04.t	2019-02-23 11:13:56.413405242 -0800
-@@ -75,7 +75,8 @@ expect EACCES -u 65532 -g 65532 unlink $
- expect 0 setfacl ${d0}/${d1} m 'u::-,g::-,o::-,m::rw,u:65531:w,g:65532:r'
- expect EACCES -u 65531 -g 65531 create ${d0}/${d1}/${n2} 0644
- expect EACCES -u 65531 -g 65531 open ${d0}/${d1} O_RDONLY
--expect 0 -u 65532 -g 65532 open ${d0}/${d1} O_RDONLY
-+# migratefs: opendir loads content that must be readable
-+expect EACCES -u 65532 -g 65532 open ${d0}/${d1} O_RDONLY
- expect EACCES -u 65532 -g 65532 create ${d0}/${d1}/${n2} 0644
- # 40
- expect 0 setfacl ${d0}/${d1} m 'u::-,g::-,o::-,m::rwx,u:65531:wx,g:65532:rx'
