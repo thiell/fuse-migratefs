@@ -25,7 +25,7 @@ for i in $(seq -w "$n"); do
 done &
 job1pid=$!
 
-for i in $(seq -w "$n"); do
+for j in $(seq -w "$n"); do
   ls $dir1 $dir2 >/dev/null
 done &
 job2pid=$!

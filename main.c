@@ -850,7 +850,7 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
 
           bool dirp = ((st.st_mode & S_IFMT) == S_IFDIR);
 
-          debug_print ("make_ovl_node %s\n", dent->d_name);
+          debug_print ("load_dir: make_ovl_node %s\n", dent->d_name);
           child = make_ovl_node (node_path, it, dent->d_name, 0, dirp, n);
           if (child == NULL)
             {
@@ -2451,7 +2451,7 @@ exit:
 }
 
 static int
-ovl_do_open (fuse_req_t req, fuse_ino_t parent, const char *name, int flags, mode_t mode)
+ovl_do_open (fuse_req_t req, fuse_ino_t parent, const char *name, int flags, mode_t mode, bool retain)
 {
   struct ovl_data *lo = ovl_data (req);
   struct ovl_node *n;
@@ -2460,6 +2460,7 @@ ovl_do_open (fuse_req_t req, fuse_ino_t parent, const char *name, int flags, mod
   int fd, ret = -1;
   int refcnt = 0;
   const struct fuse_ctx *ctx = fuse_req_ctx (req);
+  pthread_mutex_t *dirlockp = NULL;
 
   debug_print ("ovl_do_open %s parent=0x%x readonly=%d\n", name, parent, readonly);
 
@@ -2494,6 +2495,9 @@ ovl_do_open (fuse_req_t req, fuse_ino_t parent, const char *name, int flags, mod
         goto exit;
 
       snprintf (path, sizeof(path), "%s/%s", p->path, name);
+
+      dirlockp = &p->dirlock;
+      pthread_mutex_lock (dirlockp);
 
       debug_print ("ovl_do_open %s creating %s on upper layer mode=0%o ctx->umask=0%o\n", name,
                    path, mode, ctx->umask);
@@ -2543,7 +2547,9 @@ ovl_do_open (fuse_req_t req, fuse_ino_t parent, const char *name, int flags, mod
     }
 
 exit:
-  if (name && n)
+  if (dirlockp)
+    pthread_mutex_unlock (dirlockp);
+  if (!retain && name && n)
     unref_node (NODE_TO_INODE(n));
   while (refcnt--)
     unref_node (parent);
@@ -2627,7 +2633,7 @@ ovl_create (fuse_req_t req, fuse_ino_t parent, const char *name,
 
   fi->flags = fi->flags | O_CREAT;
 
-  fd = ovl_do_open (req, parent, name, fi->flags, mode);
+  fd = ovl_do_open (req, parent, name, fi->flags, mode, true);
   if (fd < 0)
     {
       fuse_reply_err (req, errno);
@@ -2646,10 +2652,11 @@ ovl_create (fuse_req_t req, fuse_ino_t parent, const char *name,
     }
   fi->fh = fd;
 
-  //ref_node (NODE_TO_INODE(node));
   fuse_reply_create (req, &e, fi);
 
 exit:
+  if (name)
+    unref_node (NODE_TO_INODE(node));  // ovl_do_open retained node to avoid race
   unref_node (parent);
   FUSE_EXIT();
 }
@@ -2663,7 +2670,7 @@ ovl_open (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 
   debug_print ("ovl_open(ino=%" PRIu64 "s)\n", ino);
 
-  fd = ovl_do_open (req, ino, NULL, fi->flags, 0700);
+  fd = ovl_do_open (req, ino, NULL, fi->flags, 0700, false);
   if (fd < 0)
     {
       fuse_reply_err (req, errno);
