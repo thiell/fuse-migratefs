@@ -405,7 +405,7 @@ rpl_stat (fuse_req_t req, struct ovl_node *node, struct stat *st)
   ret = TEMP_FAILURE_RETRY (fstatat (node_dirfd (node), node->path, st, AT_SYMLINK_NOFOLLOW));
   if (ret < 0)
     {
-      debug_print ("rpl_stat: fstatat failed with errno=%d\n", errno);
+      debug_print ("rpl_stat: fstatat path=%s failed with errno=%d\n", node->path, errno);
       return ret;
     }
 
@@ -816,12 +816,18 @@ load_dir (struct ovl_data *lo, struct ovl_node *n, struct ovl_layer *layer, char
           if ((strcmp (dent->d_name, ".") == 0) || strcmp (dent->d_name, "..") == 0)
             continue;
 
-          debug_print ("dent->d_name=%s\n", dent->d_name);
+          debug_print ("load_dir: dent->d_name=%s\n", dent->d_name);
           if (TEMP_FAILURE_RETRY (fstatat (fd, dent->d_name, &st, AT_SYMLINK_NOFOLLOW)) < 0)
             {
-              debug_print ("fstatat failed errno=%d\n", errno);
-              closedir (dp);
-              return NULL;
+              // cannot stat a file - we ignore and log a message (when not ENOENT, which is ok),
+              // we don't really want to propagate the error because otherwise it might lead to
+              // weird error when opening the directory...
+              if (errno != ENOENT)
+                {
+                  verb_print ("load_dir=warning call=fstatat path=%s d_name=%s errno=%d\n", path,
+                              dent->d_name, errno);
+                }
+              continue;
             }
 
           pthread_mutex_lock (&ovl_node_global_lock);
@@ -1194,7 +1200,10 @@ ovl_opendir (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
   node = load_dir (lo, node, node->layer, path, name);
   pthread_mutex_unlock (dirlockp);
   if (node == NULL)
-    goto out_errno;
+    {
+      debug_print("ovl_opendir: load_dir failed errno=%d\n", errno);
+      goto out_errno;
+    }
 
   d->offset = 0;
   pthread_mutex_lock (&ovl_node_global_lock);
