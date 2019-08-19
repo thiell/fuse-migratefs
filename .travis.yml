@@ -14,7 +14,6 @@ addons:
     - xz-utils
     - python3
     - g++
-    - python3-setuptools
     - libacl1-dev
     - libtest-most-perl
     - stress-ng
