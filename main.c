@@ -136,12 +136,31 @@ make_keys()
   (void) pthread_key_create(&key_ctx_uid, &free);
 }
 
-static void FUSE_ENTER(fuse_req_t req)
+static void FUSE_ENTER_NOSETGROUPS(fuse_req_t req)
 {
   const struct fuse_ctx *ctx = fuse_req_ctx (req);
+  uid_t *ctx_uid_ptr;
+
+  // use direct syscall as the libc function will synchronize it for all threads
+  if (syscall(SYS_setresgid, -1, ctx->gid, -1) < 0)
+    debug_print ("FUSE_EXIT: setresgid failed with errno=%d\n", errno);
+
+  if ((ctx_uid_ptr = pthread_getspecific(key_ctx_uid)) == NULL) {
+    ctx_uid_ptr = malloc(sizeof(*ctx_uid_ptr));
+    if (ctx_uid_ptr == NULL)
+      error (EXIT_FAILURE, ENOMEM, "cannot allocate memory");
+     (void) pthread_setspecific(key_ctx_uid, ctx_uid_ptr);
+  }
+  *ctx_uid_ptr = ctx->uid;
+
+  if (syscall(SYS_setresuid, -1, ctx->uid, -1) < 0)
+    debug_print ("FUSE_EXIT: setresuid failed with errno=%d\n", errno);
+}
+
+static void FUSE_ENTER(fuse_req_t req)
+{
   int ret;
   gid_t *suppl_gids;
-  uid_t *ctx_uid_ptr;
 
   (void) pthread_once(&key_once, make_keys);
 
@@ -166,23 +185,10 @@ static void FUSE_ENTER(fuse_req_t req)
         }
     }
 
-  // use direct syscall as the libc function will synchronize it for all threads
-  if (syscall(SYS_setresgid, -1, ctx->gid, -1) < 0)
-    debug_print ("FUSE_EXIT: setresgid failed with errno=%d\n", errno);
-
-  if ((ctx_uid_ptr = pthread_getspecific(key_ctx_uid)) == NULL) {
-    ctx_uid_ptr = malloc(sizeof(*ctx_uid_ptr));
-    if (ctx_uid_ptr == NULL)
-      error (EXIT_FAILURE, ENOMEM, "cannot allocate memory");
-     (void) pthread_setspecific(key_ctx_uid, ctx_uid_ptr);
-  }
-  *ctx_uid_ptr = ctx->uid;
-
-  if (syscall(SYS_setresuid, -1, ctx->uid, -1) < 0)
-    debug_print ("FUSE_EXIT: setresuid failed with errno=%d\n", errno);
+  FUSE_ENTER_NOSETGROUPS(req);  // UID and primary GID
 }
 
-static void FUSE_EXIT()
+static void FUSE_EXIT_NOSETGROUPS()
 {
   gid_t gid = 0;
 
@@ -193,11 +199,17 @@ static void FUSE_EXIT()
 
   if (syscall(SYS_setresgid, -1, 0, -1) < 0)
     debug_print ("FUSE_EXIT: setresgid failed with errno=%d\n", errno);
+}
+
+static void FUSE_EXIT()
+{
+  gid_t gid = 0;
+
+  FUSE_EXIT_NOSETGROUPS();  // UID and primary GID
 
   if (syscall(SYS_setgroups, 1, &gid) < 0)
     debug_print ("FUSE_EXIT: setgroups failed with errno=%d\n", errno);
 }
-
 
 static uid_t FUSE_GETCURRENTUID()
 {
@@ -2574,6 +2586,8 @@ ovl_write_buf (fuse_req_t req, fuse_ino_t ino,
 	      struct fuse_bufvec *in_buf, off_t off,
 	      struct fuse_file_info *fi)
 {
+  FUSE_ENTER_NOSETGROUPS(req);  // needed for disk quota enforcement
+
   (void) ino;
   ssize_t res;
   struct fuse_bufvec out_buf = FUSE_BUFVEC_INIT (fuse_buf_size (in_buf));
@@ -2590,6 +2604,8 @@ ovl_write_buf (fuse_req_t req, fuse_ino_t ino,
     fuse_reply_err (req, errno);
   else
     fuse_reply_write (req, (size_t) res);
+
+  FUSE_EXIT_NOSETGROUPS();
 }
 
 static void
